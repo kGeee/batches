@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Batches</string>
+    <key>CFBundleDisplayName</key><string>Batches</string>
+    <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>UILaunchScreen</key><dict/>
+    <key>UIApplicationSceneManifest</key>
+    <dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
+    <!-- Only standard HTTPS, so no export compliance paperwork for TestFlight or the App Store. -->
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <key>NSCameraUsageDescription</key><string>Batches uses the camera to shoot RAW photos with your chosen film look.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key><string>Batches saves your developed photos and their RAW originals to your library.</string>
+    <key>NSPhotoLibraryUsageDescription</key><string>Batches lets you pick photos for a batch.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+            <key>CFBundleURLSchemes</key><array><string>strewn</string></array>
+        </dict>
+    </array>
+    <key>StrewnAppleSignIn</key><string>$(APPLE_SIGN_IN)</string>
+    <key>StrewnSupportEmail</key><string>$(SUPPORT_EMAIL)</string>
+    <key>StrewnPrivacyPolicyURL</key><string>$(PRIVACY_POLICY_URL)</string>
+    <key>SupabaseURL</key><string>$(SUPABASE_URL)</string>
+    <key>SupabaseAnonKey</key><string>$(SUPABASE_ANON_KEY)</string>
+</dict>
+</plist>

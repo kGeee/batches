@@ -1,0 +1,19 @@
+// Placeholders, safe to commit. Put your project's real values in Config.local.xcconfig next to
+// this file (gitignored, see README "Run it against Supabase"); it overrides these. With the
+// placeholders the app runs in demo mode on MockBackend.
+SUPABASE_URL = https:/$()/your-project.supabase.co
+// The project's publishable key (sb_publishable_...) or legacy anon key. Never the secret key.
+SUPABASE_ANON_KEY = replace-me
+
+// Sign in with Apple needs a paid Apple developer team, the Sign in with Apple capability
+// (Strewn.entitlements, see README) and the Apple provider turned on in Supabase. Set NO to
+// hide the button and sign in only with email.
+APPLE_SIGN_IN = YES
+
+// Where testers and App Review reach you, shown in the account sheet. Leave empty to hide the
+// row; set your real address in Config.local.xcconfig. The privacy policy link shows once
+// PRIVACY_POLICY_URL is set (write // as /$()/ in xcconfig files).
+SUPPORT_EMAIL =
+PRIVACY_POLICY_URL =
+
+#include? "Config.local.xcconfig"
