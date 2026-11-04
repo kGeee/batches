@@ -1,5 +1,5 @@
-# XcodeGen spec: run `xcodegen generate` to create Strewn.xcodeproj
-name: Strewn
+# XcodeGen spec: run `xcodegen generate` to create Batches.xcodeproj
+name: Batches
 options:
   bundleIdPrefix: com.kevingeorge
   deploymentTarget:
@@ -20,7 +20,9 @@ settingGroups:
     MTL_COMPILER_FLAGS: "-fcikernel"
     MTLLINKER_FLAGS: "-cikernel"
 targets:
-  Strewn:
+  # Folders keep the app's first name, Strewn; the target, scheme and app are Batches.
+  # Bundle IDs stay com.kevingeorge.strewn*, since App Store Connect is tied to them.
+  Batches:
     type: application
     platform: iOS
     sources: [Strewn]
@@ -29,7 +31,7 @@ targets:
         buildPhase: resources
     dependencies:
       - package: Supabase
-      - target: StrewnPhotoEdit
+      - target: BatchesPhotoEdit
     # XcodeGen writes this file from the properties below on every generate, so edit them here.
     entitlements:
       path: Strewn/Resources/Strewn.entitlements
@@ -49,8 +51,8 @@ targets:
       Debug: Strewn/Resources/Config.xcconfig
       Release: Strewn/Resources/Config.xcconfig
 
-  # "Edit with Strewn" inside the Photos app. Shares the editor, recipe and color pipeline.
-  StrewnPhotoEdit:
+  # "Edit with Batches" inside the Photos app. Shares the editor, recipe and color pipeline.
+  BatchesPhotoEdit:
     type: app-extension
     platform: iOS
     sources:

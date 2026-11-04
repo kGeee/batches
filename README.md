@@ -46,7 +46,7 @@ Requirements: Xcode 16, iOS 17+, and a RAW-capable iPhone for the camera (Pro mo
 brew install xcodegen
 cd gallery-app
 xcodegen generate
-open Strewn.xcodeproj
+open Batches.xcodeproj
 ```
 
 The app runs on the `MockBackend` with sample data until you put real values in `Strewn/Resources/Config.xcconfig` (demo mode). In demo mode, sign in with any email and any six-digit code; you become `@kevin` with three sample friends. The sample photos point at picsum.photos placeholders at a mix of aspect ratios.
