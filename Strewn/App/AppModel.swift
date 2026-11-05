@@ -91,6 +91,7 @@ final class AppModel {
     }
 
     private func clearSession() {
+        Task { await PhotoImageLoader.shared.forgetEverything() }
         me = nil
         myCollections = []
         feed = []

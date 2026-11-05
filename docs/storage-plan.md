@@ -60,6 +60,8 @@ The four in-app tiers add up to about 0.8 MB per photo, roughly a quarter of one
 
 **Client rule:** pick the smallest tier whose long edge is at least the on-screen size in pixels (points times display scale), allowing up to 15% upscale before stepping up. Decode with ImageIO thumbnails (`kCGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceThumbnailMaxPixelSize`) so memory matches the view, not the file.
 
+**How the app loads them today:** it asks for a link only when a copy is about to appear (`PhotoLinks`, in groups of up to 50) and keeps downloaded copies in Caches under their storage path (`SharedPhotoDisk`, up to 300 MB, cleared on sign-out), so a new link never means a new download. Signing every copy of every photo up front took 4 seconds on average and sometimes timed out.
+
 ## 4. Changing or removing a photo
 
 With no editor, a shared photo's copies are made once and never re-rendered.

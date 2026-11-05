@@ -26,8 +26,6 @@ struct Photo: Identifiable, Hashable, Codable {
     /// Where this photo's shared copies live in cloud storage ("{owner}/{photo}/{rev}"), or nil
     /// while nothing has been shared. Only developed HEIC copies are ever uploaded, never the RAW.
     var sharePath: String? = nil
-    /// Signed links to the shared copies by size, filled in when a pile is loaded from the backend.
-    var shareCopies: [ShareTier: URL] = [:]
     /// Who added this photo, in a group pile, when it wasn't the pile's owner. nil means the owner.
     var addedBy: UUID? = nil
 
@@ -39,6 +37,12 @@ struct Photo: Identifiable, Hashable, Codable {
         case s, m, l
         var longEdge: Int {
             switch self { case .s: 320; case .m: 800; case .l: 1800 }
+        }
+
+        /// The smallest copy that covers this many pixels on screen, allowing up to 15% upscale
+        /// (the client rule in docs/storage-plan.md).
+        static func fitting(pixels: CGFloat) -> ShareTier {
+            allCases.first { CGFloat($0.longEdge) * 1.15 >= pixels } ?? .l
         }
     }
 

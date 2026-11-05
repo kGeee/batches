@@ -7,8 +7,8 @@ import Supabase
 ///
 /// Shared copies go to a private Supabase Storage bucket named "media" for now, as
 /// {owner}/{photo}/{rev}/{s|m|l}.heic, and viewers get signed links. docs/storage-plan.md
-/// describes the R2 setup that replaces this bucket at scale; only `publish` and
-/// `attachShareLinks` change when it does. RAW files are never uploaded.
+/// describes the R2 setup that replaces this bucket at scale; only `publish` and the signer set
+/// in `init` change when it does. RAW files are never uploaded.
 final class SupabaseBackend: Backend, @unchecked Sendable {
     struct Config {
         let url: URL
@@ -31,7 +31,15 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
     private let pileSelect = "*, photos!photos_collection_id_fkey(*), owner:profiles!owner_id(*)"
 
     init(config: Config) {
-        client = SupabaseClient(supabaseURL: config.url, supabaseKey: config.anonKey)
+        let client = SupabaseClient(supabaseURL: config.url, supabaseKey: config.anonKey)
+        self.client = client
+        // Each result names its own path, and one unsignable path doesn't sink the rest.
+        PhotoLinks.signer = { paths in
+            let results = try await client.storage.from("media").createSignedURLs(paths: paths, expiresIn: PhotoLinks.lifetime)
+            var byPath: [String: URL] = [:]
+            for case .success(let path, let url) in results { byPath[path] = url }
+            return byPath
+        }
     }
 
     // MARK: Account
@@ -310,7 +318,8 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
         Photo.ShareTier.allCases.map { "\(sharePath)/\($0.rawValue).heic" }
     }
 
-    /// Turns rows into piles: who they're shared with (owner only) and signed links to the copies.
+    /// Turns rows into piles: who they're shared with (owner only) and who added each photo.
+    /// Links to the shared copies come later, per photo on screen, from PhotoLinks.
     private func finish(_ rows: [CollectionRow]) async throws -> [PhotoCollection] {
         guard !rows.isEmpty else { return [] }
         let me = try? await myID()
@@ -343,23 +352,6 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
             for i in piles.indices {
                 let ids = Set(piles[i].photos.compactMap(\.addedBy))
                 piles[i].contributors = people.filter { ids.contains($0.id) }
-            }
-        }
-
-        let tiers = Photo.ShareTier.allCases
-        let paths = piles.flatMap(\.photos).compactMap(\.sharePath).flatMap { p in tiers.map { "\(p)/\($0.rawValue).heic" } }
-        guard !paths.isEmpty else { return piles }
-        // Links last six hours. If signing fails the photos still lay out at their true shape
-        // and draw as placeholders.
-        let results = (try? await media.createSignedURLs(paths: paths, expiresIn: 6 * 3600)) ?? []
-        // Each result names its own path, and one unsignable path doesn't sink the rest.
-        var byPath: [String: URL] = [:]
-        for case .success(let path, let url) in results { byPath[path] = url }
-        for i in piles.indices {
-            for j in piles[i].photos.indices {
-                guard let base = piles[i].photos[j].sharePath else { continue }
-                for tier in tiers { piles[i].photos[j].shareCopies[tier] = byPath["\(base)/\(tier.rawValue).heic"] }
-                piles[i].photos[j].imageURL = piles[i].photos[j].shareCopies[.l] ?? Photo.missingImage
             }
         }
         return piles
