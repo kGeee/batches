@@ -37,7 +37,7 @@ Then check on reports daily: Table Editor → `reports`, newest first, `status =
 
 ### 3. Privacy policy (done)
 
-Live at https://batches-app-topaz.vercel.app/privacy, deployed from `site/` to the Vercel project `batches-app` (redeploy with `vercel deploy --prod` from `site/`). `PRIVACY_POLICY_URL` is set in `Config.local.xcconfig`, so build 7 links to it from the account sheet. Paste the same URL into App Store Connect. It lists kegeorge246@gmail.com as the contact; change it there and in `SUPPORT_EMAIL` if you'd rather use a separate address.
+Live at https://batches.space/privacy, deployed from `site/` to the Vercel project `batches-app` (redeploy with `vercel deploy --prod` from `site/`). DNS is at Namecheap; `www` redirects to the main address, and the old https://batches-app-topaz.vercel.app addresses still work. `PRIVACY_POLICY_URL` in `Config.local.xcconfig` points at the new address from build 8 on; build 7 links to the old one. Paste the same URL into App Store Connect. It lists kegeorge246@gmail.com as the contact; change it there and in `SUPPORT_EMAIL` if you'd rather use a separate address.
 
 ### 4. App Store Connect (setup, under an hour)
 

@@ -1,1 +1,17 @@
-{ "cleanUrls": true, "trailingSlash": false }
+{
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.batches.space"
+        }
+      ],
+      "destination": "https://batches.space/$1",
+      "permanent": true
+    }
+  ]
+}

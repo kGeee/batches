@@ -1,4 +1,199 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Batches</title><meta http-equiv="refresh" content="0; url=/privacy"></head>
-<body><a href="/privacy">Batches privacy policy</a></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batches: your photos, in batches</title>
+<meta name="description" content="Put a trip's photos in one place, frame them, and share them with the people who were there. Batches for iPhone.">
+<link rel="canonical" href="https://batches.space/">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#ddd4c1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#26231e" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://batches.space/">
+<meta property="og:title" content="Batches">
+<meta property="og:description" content="Put a trip's photos in one place, frame them, and share them with the people who were there.">
+<meta property="og:image" content="https://batches.space/img/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --desk: #ddd4c1; --thread: rgba(70, 56, 34, .038); --ink: #1d1b17; --muted: #5a5347;
+    --paper: #faf8f2; --film: #161412; --accent: #8a5210; --on-accent: #fffaf1; --shadow: 40, 28, 12;
+    --serif: "New York", "Iowan Old Style", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --desk: #26231e; --thread: rgba(255, 244, 222, .035); --ink: #f1ebdf; --muted: #b3aa9b;
+      --accent: #e7a452; --on-accent: #241808; --shadow: 0, 0, 0;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; color: var(--ink); background-color: var(--desk);
+    background-image:
+      repeating-linear-gradient(0deg, var(--thread) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, var(--thread) 0 1px, transparent 1px 4px);
+    font: 18px/1.5 var(--sans); overflow-x: hidden;
+  }
+  a { color: var(--accent); text-underline-offset: .16em; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  .wrap { width: min(1180px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
+
+  /* The hero: words on the left, the pile on the desk beside them. */
+  .brand { display: flex; align-items: center; gap: 10px; padding-top: 24px; font: 600 19px var(--serif); }
+  .brand img { width: 34px; height: 34px; border-radius: 8px; }
+  .hero { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(16px, 3vw, 40px); align-items: center; padding: clamp(24px, 4vw, 48px) 0 clamp(40px, 6vw, 80px); }
+  h1 { font: 700 clamp(52px, 7.4vw, 96px)/.98 var(--serif); letter-spacing: -.02em; margin: 0 0 22px; }
+  .lede { font-size: clamp(19px, 2vw, 22px); line-height: 1.42; max-width: 25em; margin: 0 0 20px; }
+  .soon { color: var(--muted); margin: 0; }
+
+  /* Prints sit at (--x, --y) with turn --r; spreading moves them to the second set. */
+  .stage { container-type: inline-size; position: relative; }
+  .desk { position: relative; height: 84cqw; }
+  .print {
+    position: absolute; left: 50%; top: 50%; margin: 0; width: var(--w); background: var(--paper);
+    --cx: var(--x); --cy: var(--y); --cr: var(--r);
+    transform: translate(-50%, -50%) translate(var(--cx), var(--cy)) rotate(var(--cr));
+    transition: transform .62s cubic-bezier(.2, .85, .25, 1);
+    box-shadow: 0 1px 2px rgba(var(--shadow), .28), 0 1.6cqw 3.4cqw rgba(var(--shadow), .26);
+  }
+  .print img { display: block; width: 100%; height: auto; }
+  .white { padding: 1.5cqw; }
+  .instant { padding: 1.5cqw 1.5cqw 6.5cqw; }
+  .mat { padding: 4cqw; }
+  .edge { padding: .45cqw; background: var(--film); }
+  .film { padding: 3.2cqw .6cqw; background-color: var(--film); }
+  .film::before, .film::after {
+    content: ""; position: absolute; left: 1cqw; right: 1cqw; height: 1.3cqw;
+    background: repeating-linear-gradient(90deg, #ece6d9 0 1cqw, transparent 1cqw 2.2cqw);
+  }
+  .film::before { top: .95cqw; }
+  .film::after { bottom: .95cqw; }
+  .stage.spread .print { --cx: var(--sx); --cy: var(--sy); --cr: var(--sr); }
+  .stage.spread .print:nth-child(1) { transition-delay: .1s; }
+  .stage.spread .print:nth-child(2) { transition-delay: .08s; }
+  .stage.spread .print:nth-child(3) { transition-delay: .06s; }
+  .stage.spread .print:nth-child(4) { transition-delay: .04s; }
+  .stage.spread .print:nth-child(5) { transition-delay: .02s; }
+
+  /* The one thing that moves by itself: the prints land in their pile when the page opens. */
+  @keyframes land { from { opacity: 0; scale: 1.14; } to { opacity: 1; scale: 1; } }
+  .print { animation: land .46s cubic-bezier(.2, .8, .3, 1) backwards; animation-delay: calc(var(--i) * 75ms); }
+
+  .toggle {
+    display: block; margin: 14px auto 0; min-height: 46px; padding: 0 22px; border: 0; border-radius: 23px;
+    background: var(--accent); color: var(--on-accent); font: 600 17px var(--sans); cursor: pointer;
+  }
+
+  /* App screens lie on the desk as prints, each at its own small angle. */
+  .story { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: center; gap: 24px; margin-bottom: clamp(56px, 8vw, 104px); }
+  .story figure { margin: 0; background: var(--paper); padding: 14px 14px 48px; transform: rotate(var(--turn)); box-shadow: 0 1px 2px rgba(var(--shadow), .28), 0 16px 34px rgba(var(--shadow), .24); }
+  .story img { display: block; width: 100%; height: auto; }
+  .story div { grid-row: 1; }
+  .story figure { grid-row: 1; grid-column: 7 / span 5; }
+  .story div { grid-column: 2 / span 4; }
+  .story.flip figure { grid-column: 2 / span 5; }
+  .story.flip div { grid-column: 8 / span 4; }
+  h2 { font: 700 clamp(34px, 4.2vw, 52px)/1.06 var(--serif); letter-spacing: -.012em; margin: 0 0 14px; }
+  .story p { margin: 0; max-width: 27em; }
+
+  .private { padding-bottom: clamp(48px, 7vw, 88px); }
+  .private h2 { margin-bottom: 26px; }
+  .private ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px clamp(32px, 6vw, 80px); max-width: 980px; }
+  .private li { font: 400 clamp(20px, 2.1vw, 24px)/1.34 var(--serif); }
+
+  footer { padding-bottom: 36px; color: var(--muted); font-size: 16px; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 8px; }
+  footer a { display: inline-block; padding: 6px 0; }
+  footer p { margin: 0; }
+
+  @media (max-width: 820px) {
+    .hero { grid-template-columns: minmax(0, 1fr); }
+    .story { display: block; }
+    .story figure, .story.flip figure { max-width: 400px; margin: 28px auto 0; }
+    .story p { max-width: none; }
+    .private ul { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .print { animation: none; transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="brand"><img src="/img/icon.png" alt="" width="34" height="34">Batches</header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <h1>Your photos, in batches.</h1>
+        <p class="lede">Put a trip's photos in one place, frame them, and share them with the people who were there.</p>
+        <p class="soon">Coming soon to the App Store, for iPhone.</p>
+      </div>
+
+      <div class="stage" id="stage">
+        <div class="desk" aria-hidden="true">
+          <figure class="print white" style="--i:0;--w:43cqw;--x:3cqw;--y:13cqw;--r:4deg;--sx:21cqw;--sy:29cqw;--sr:-2deg"><img src="/img/print-teal.jpg" alt="" width="1200" height="480"></figure>
+          <figure class="print mat" style="--i:1;--w:29cqw;--x:-14cqw;--y:6cqw;--r:-10deg;--sx:-33cqw;--sy:17cqw;--sr:3deg"><img src="/img/print-forest.jpg" alt="" width="620" height="800"></figure>
+          <figure class="print edge" style="--i:2;--w:35cqw;--x:12cqw;--y:-11cqw;--r:7deg;--sx:-3cqw;--sy:5cqw;--sr:-3deg"><img src="/img/print-night.jpg" alt="" width="900" height="600"></figure>
+          <figure class="print film" style="--i:3;--w:36cqw;--x:15cqw;--y:6cqw;--r:-6deg;--sx:30cqw;--sy:-20cqw;--sr:6deg"><img src="/img/print-mono.jpg" alt="" width="900" height="600"></figure>
+          <figure class="print instant" style="--i:4;--w:26cqw;--x:-13cqw;--y:-10cqw;--r:7deg;--sx:0cqw;--sy:-25cqw;--sr:-5deg"><img src="/img/print-dawn.jpg" alt="" width="620" height="800"></figure>
+          <figure class="print white" style="--i:5;--w:42cqw;--x:0cqw;--y:0cqw;--r:-2deg;--sx:-27cqw;--sy:-21cqw;--sr:-4deg"><img src="/img/print-sunset.jpg" alt="" width="900" height="620"></figure>
+        </div>
+        <button class="toggle" id="toggle" type="button" aria-pressed="false">Spread out this batch</button>
+      </div>
+    </section>
+
+    <section class="story">
+      <div>
+        <h2>Every photo, whole.</h2>
+        <p>Photos always show full frame, never cropped to fit a grid. Pick how each batch is framed: white border, instant film, film strip, gallery mat or a thin black edge.</p>
+      </div>
+      <figure style="--turn:1.4deg"><img src="/img/batch.jpg" alt="A batch called Big Sur, one afternoon, showing a night landscape in a white border." width="760" height="1023" loading="lazy"></figure>
+    </section>
+
+    <section class="story flip">
+      <div>
+        <h2>Everyone's shots in one batch.</h2>
+        <p>Let friends add their own photos, so a weekend away ends up in one place, with each photo marked with who added it. Follow people to see their new batches as they share them.</p>
+      </div>
+      <figure style="--turn:-1.6deg"><img src="/img/group.jpg" alt="A group batch called Mono Lake sunrise, labelled: you can add photos." width="760" height="1023" loading="lazy"></figure>
+    </section>
+
+    <section class="story">
+      <div>
+        <h2>You decide who sees it.</h2>
+        <p>Every batch starts private. Share it with specific people, your followers or anyone on Batches, and change your mind whenever you like.</p>
+      </div>
+      <figure style="--turn:.9deg"><img src="/img/share.jpg" alt="The share settings for a batch: only me, specific people, followers, or anyone on Batches." width="760" height="1023" loading="lazy"></figure>
+    </section>
+
+    <section class="private">
+      <h2>Your photos stay yours.</h2>
+      <ul>
+        <li>Your originals stay on your phone.</li>
+        <li>Only screen-sized copies of photos you share are uploaded, with location removed.</li>
+        <li>No ads, no tracking, no analytics.</li>
+        <li>Delete your account and everything you've shared from inside the app.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <nav aria-label="Footer"><a href="/support">Support</a><a href="/privacy">Privacy policy</a></nav>
+    <p>&copy; 2026 Kevin George</p>
+  </footer>
+</div>
+<script>
+  var stage = document.getElementById("stage"), button = document.getElementById("toggle");
+  button.addEventListener("click", function () {
+    var open = stage.classList.toggle("spread");
+    button.setAttribute("aria-pressed", String(open));
+    button.textContent = open ? "Stack it back up" : "Spread out this batch";
+  });
+</script>
+</body>
+</html>
