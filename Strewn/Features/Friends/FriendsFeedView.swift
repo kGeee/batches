@@ -50,6 +50,7 @@ struct FriendsFeedView: View {
             }
             .navigationDestination(for: User.self) { ProfileView(user: $0) }
             .navigationDestination(for: FindPeopleRoute.self) { _ in FindPeopleView() }
+            .navigationDestination(for: FollowListRoute.self) { FollowListView(route: $0) }
         }
     }
 
@@ -115,7 +116,7 @@ struct FriendsFeedView: View {
             Text("Follow friends to see the batches they share with followers. Batches shared with you directly show up here too.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             NavigationLink(value: FindPeopleRoute()) { Text("Find people") }
-                .buttonStyle(.borderedProminent).tint(.strewnAccent)
+                .buttonStyle(.borderedProminent).tint(.strewnAccent).foregroundStyle(Color.onAccent)
         }
         .padding(28)
         .frame(maxWidth: .infinity)

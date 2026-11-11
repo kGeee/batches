@@ -14,6 +14,8 @@ final class AppModel {
     private(set) var following: Set<UUID> = []
     /// People you've blocked, for the list in your account where you can unblock them.
     private(set) var blocked: [User] = []
+    /// How you've arranged your desk. Kept on this phone too, so it's there straight away.
+    private(set) var desk = DeskLayout()
     /// A pile opened from a strewn://pile link.
     var linkedPile: PhotoCollection?
     /// The photo a strewn://pile link pointed at, opened inside linkedPile.
@@ -22,6 +24,9 @@ final class AppModel {
 
     private let backend: Backend
     @ObservationIgnored private let local = LocalLibrary()
+    /// Goes up with every change to the desk, so a slower load can't undo a newer change.
+    @ObservationIgnored private var deskRevision = 0
+    @ObservationIgnored private var deskLoadedFor: UUID?
 
     init(backend: Backend) { self.backend = backend }
 
@@ -87,6 +92,7 @@ final class AppModel {
     func deleteAccount() async throws {
         try await backend.deleteAccount()
         local.forget((myCollections + feed).flatMap(\.photos).map(\.id))
+        if let me { Self.forgetDesk(of: me.id) }
         clearSession()
     }
 
@@ -97,6 +103,8 @@ final class AppModel {
         feed = []
         following = []
         blocked = []
+        desk = DeskLayout()
+        deskLoadedFor = nil
         auth = .signedOut
     }
 
@@ -115,6 +123,8 @@ final class AppModel {
     /// Reloads your piles, who you follow and the feed.
     func refresh() async {
         guard let me else { return }
+        // Alongside the rest, so a slow desk doesn't hold up the feed.
+        async let deskLoaded: Void = refreshDesk(for: me.id)
         do {
             async let mine = backend.collections(ownedBy: me.id)
             async let friends = backend.feed()
@@ -131,6 +141,7 @@ final class AppModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+        await deskLoaded
     }
 
     // MARK: People
@@ -161,6 +172,78 @@ final class AppModel {
             if wasFollowing { following.insert(user.id) } else { following.remove(user.id) }
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Who follows this person, by handle.
+    func followers(of user: User) async throws -> [User] {
+        let ids = Set(blocked.map(\.id))
+        return try await backend.followers(user.id).filter { !ids.contains($0.id) }.sorted { $0.handle < $1.handle }
+    }
+
+    /// Who this person follows, by handle.
+    func following(of user: User) async throws -> [User] {
+        let ids = Set(blocked.map(\.id))
+        return try await backend.following(user.id).filter { !ids.contains($0.id) }.sorted { $0.handle < $1.handle }
+    }
+
+    // MARK: Your desk
+
+    /// Changes the desk. Pass save: false while a drag is still going; `saveDesk` ends it.
+    func changeDesk(save: Bool = true, _ change: (inout DeskLayout) -> Void) {
+        // On a copy: callers read the desk's tiles from inside `change`, and that read would
+        // overlap a direct inout access to `desk`, which traps at runtime.
+        var next = desk
+        change(&next)
+        desk = next
+        deskRevision += 1
+        if save { saveDesk() }
+    }
+
+    /// Keeps the desk on this phone and sends it to your account. If that fails (no signal), the
+    /// change is marked unsent and goes up with the next refresh instead of being overwritten.
+    func saveDesk() {
+        guard let me else { return }
+        desk = desk.normalized(keeping: myCollections)
+        let layout = desk
+        Self.storeDesk(layout, unsent: true, for: me.id)
+        let revision = deskRevision
+        Task {
+            guard (try? await backend.saveDeskLayout(layout)) != nil, revision == deskRevision else { return }
+            Self.storeDesk(layout, unsent: false, for: me.id)
+        }
+    }
+
+    private func refreshDesk(for id: UUID) async {
+        if deskLoadedFor != id {
+            deskLoadedFor = id
+            if let stored = Self.storedDesk(of: id) { desk = stored.layout }
+        }
+        if Self.storedDesk(of: id)?.unsent == true {
+            let layout = desk
+            if (try? await backend.saveDeskLayout(layout)) != nil { Self.storeDesk(layout, unsent: false, for: id) }
+            return
+        }
+        let revision = deskRevision
+        guard let remote = try? await backend.deskLayout(), revision == deskRevision else { return }
+        desk = remote
+        Self.storeDesk(remote, unsent: false, for: id)
+    }
+
+    private struct StoredDesk: Codable { var layout: DeskLayout; var unsent: Bool }
+    private static func deskKey(_ id: UUID) -> String { "strewn.desk.\(id.uuidString.lowercased())" }
+
+    private static func storedDesk(of id: UUID) -> StoredDesk? {
+        UserDefaults.standard.data(forKey: deskKey(id)).flatMap { try? JSONDecoder().decode(StoredDesk.self, from: $0) }
+    }
+
+    private static func storeDesk(_ layout: DeskLayout, unsent: Bool, for id: UUID) {
+        if let data = try? JSONEncoder().encode(StoredDesk(layout: layout, unsent: unsent)) {
+            UserDefaults.standard.set(data, forKey: deskKey(id))
+        }
+    }
+
+    private static func forgetDesk(of id: UUID) {
+        UserDefaults.standard.removeObject(forKey: deskKey(id))
     }
 
     // MARK: Safety
@@ -277,6 +360,26 @@ final class AppModel {
 
     func setFrame(_ frame: FrameStyle, for collectionID: UUID) {
         update(collectionID) { $0.frame = frame }
+    }
+
+    func setFont(_ font: BatchFont, for collectionID: UUID) {
+        update(collectionID) { $0.font = font }
+    }
+
+    /// Replaces where a batch's photos sit on its board, and opens the batch as a board.
+    func setBoard(_ placements: [UUID: BatchBoard.Placement], for collectionID: UUID) {
+        update(collectionID) { pile in
+            pile.board = BatchBoard(isOn: true, placements: Dictionary(uniqueKeysWithValues: placements.map { (BatchBoard.key($0.key), $0.value) }))
+        }
+    }
+
+    /// Turns the board layout on or off. Its arrangement is kept either way.
+    func setBoardOn(_ isOn: Bool, for collectionID: UUID) {
+        update(collectionID) { pile in
+            var board = pile.board ?? BatchBoard()
+            board.isOn = isOn
+            pile.board = board
+        }
     }
 
     func rename(_ collectionID: UUID, to title: String) {

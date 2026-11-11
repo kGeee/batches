@@ -54,7 +54,7 @@ struct FollowButton: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(following ? Color.secondary.opacity(0.25) : Color.strewnAccent)
-        .foregroundStyle(following ? Color.primary : Color.white)
+        .foregroundStyle(following ? Color.primary : Color.onAccent)
         .sensoryFeedback(.selection, trigger: following)
         .confirmationDialog("Unfollow @\(user.handle)?", isPresented: $confirmUnfollow, titleVisibility: .visible) {
             Button("Unfollow", role: .destructive) { Task { await model.toggleFollow(user) } }

@@ -32,6 +32,8 @@ struct CreateProfileView: View {
                 }
                 if let problem { Text(problem).foregroundStyle(.red).font(.footnote) }
             }
+            .scrollContentBackground(.hidden)
+            .background(DeskMatBackground())
             .navigationTitle("Make your profile")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

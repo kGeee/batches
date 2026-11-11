@@ -35,6 +35,11 @@ protocol Backend: Sendable {
     func follow(_ userID: UUID) async throws
     func unfollow(_ userID: UUID) async throws
 
+    // Your desk
+    /// How you've arranged your desk, or nil if you never have. Only you can read it.
+    func deskLayout() async throws -> DeskLayout?
+    func saveDeskLayout(_ layout: DeskLayout) async throws
+
     // Piles
     func collections(ownedBy userID: UUID) async throws -> [PhotoCollection]
     func collection(id: UUID) async throws -> PhotoCollection?
@@ -116,6 +121,7 @@ actor MockBackend: Backend {
     private var members: Set<Pair>   // (pile id, person id)
     private var contributors: Set<Pair> = []   // members who may add photos
     private var blocks: Set<Pair> = []   // (blocker, blocked)
+    private var desks: [UUID: DeskLayout] = [:]
 
     private struct Pair: Hashable { let a: UUID; let b: UUID }
 
@@ -161,6 +167,7 @@ actor MockBackend: Backend {
         members = members.filter { $0.b != me }
         contributors = contributors.filter { $0.b != me }
         blocks = blocks.filter { $0.a != me && $0.b != me }
+        desks[me] = nil
         people[me] = nil
         signedIn = nil
     }
@@ -206,6 +213,11 @@ actor MockBackend: Backend {
         let me = try requireMe()
         follows.remove(Pair(a: me, b: userID))
     }
+
+    // Your desk
+
+    func deskLayout() async throws -> DeskLayout? { desks[try requireMe()] }
+    func saveDeskLayout(_ layout: DeskLayout) async throws { desks[try requireMe()] = layout }
 
     // Piles
 

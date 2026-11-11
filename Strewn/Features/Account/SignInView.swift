@@ -64,6 +64,7 @@ struct SignInView: View {
                         Text("Sign in").frame(maxWidth: .infinity).padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent).tint(.primary)
+                    .foregroundStyle(!emailLooksValid || password.isEmpty || working ? Color.secondary : Color(uiColor: .systemBackground))
                     .disabled(!emailLooksValid || password.isEmpty || working)
                     Button("Use a sign-in code instead") { usePassword = false; password = ""; problem = nil }
                         .font(.footnote)
@@ -77,6 +78,8 @@ struct SignInView: View {
                         Text("Email me a sign-in code").frame(maxWidth: .infinity).padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent).tint(.primary)
+                    // The button is white at night, so the label can't be the default white too.
+                    .foregroundStyle(!emailLooksValid || working ? Color.secondary : Color(uiColor: .systemBackground))
                     .disabled(!emailLooksValid || working)
                     Button("Sign in with a password") { usePassword = true; problem = nil; focus = .email }
                         .font(.footnote).foregroundStyle(.secondary)

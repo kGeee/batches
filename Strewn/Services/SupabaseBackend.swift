@@ -172,6 +172,20 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
             .eq("follower_id", value: me.uuidString).eq("followee_id", value: userID.uuidString).execute()
     }
 
+    // MARK: Your desk
+
+    func deskLayout() async throws -> DeskLayout? {
+        let me = try await myID()
+        let rows: [DeskLayoutRow] = try await client.from("desk_layouts").select("layout")
+            .eq("owner_id", value: me.uuidString).limit(1).execute().value
+        return rows.first?.layout.value
+    }
+
+    func saveDeskLayout(_ layout: DeskLayout) async throws {
+        let me = try await myID()
+        try await client.from("desk_layouts").upsert(NewDeskLayout(owner_id: me, layout: layout)).execute()
+    }
+
     // MARK: Piles
 
     func collections(ownedBy userID: UUID) async throws -> [PhotoCollection] {
@@ -373,6 +387,8 @@ private struct MemberRow: Decodable { let collection_id: UUID }
 private struct MemberInsert: Encodable { let collection_id: UUID; let user_id: UUID; let can_add: Bool }
 private struct MemberWithProfile: Decodable { let collection_id: UUID; let can_add: Bool; let profile: ProfileRow }
 private struct ShareRow: Decodable { let share_path: String? }
+private struct DeskLayoutRow: Decodable { let layout: Lenient<DeskLayout> }
+private struct NewDeskLayout: Encodable { let owner_id: UUID; let layout: DeskLayout }
 private struct BlockRow: Encodable { let blocker_id: UUID; let blocked_id: UUID }
 private struct ReportRow: Encodable {
     let reported_user_id: UUID?; let collection_id: UUID?; let photo_id: UUID?; let reason: String; let details: String?
@@ -384,16 +400,20 @@ private struct CollectionRow: Codable {
     let like_count: Int?; let comment_count: Int?
     var photos: [PhotoRow]?
     var owner: ProfileRow?
+    /// A name this build doesn't know reads as nil, the default look.
+    let font: String?
+    let board: Lenient<BatchBoard>?
 
     init(_ c: PhotoCollection) {
         id = c.id; owner_id = c.ownerID; title = c.title; place = c.place; shot_on = c.shotOn
         cover_photo_id = c.coverPhotoID; frame = c.frame; visibility = c.visibility.rawValue
         like_count = nil; comment_count = nil; photos = nil; owner = nil
+        font = c.font?.rawValue; board = c.board.map { Lenient($0) }
     }
 
     // Writes send only the pile's own columns; counts are kept by the database.
     enum CodingKeys: String, CodingKey {
-        case id, owner_id, title, place, shot_on, cover_photo_id, frame, visibility, like_count, comment_count, photos, owner
+        case id, owner_id, title, place, shot_on, cover_photo_id, frame, visibility, like_count, comment_count, photos, owner, font, board
     }
 
     func encode(to encoder: Encoder) throws {
@@ -402,6 +422,10 @@ private struct CollectionRow: Codable {
         try c.encode(place, forKey: .place); try c.encode(shot_on, forKey: .shot_on)
         try c.encode(cover_photo_id, forKey: .cover_photo_id); try c.encode(frame, forKey: .frame)
         try c.encode(visibility, forKey: .visibility)
+        // Only once chosen. Choosing "Classic" sends it, so going back to the default is saved, and a
+        // batch that never had either saves fine before the migration adding them has run.
+        try c.encodeIfPresent(font, forKey: .font)
+        try c.encodeIfPresent(board?.value, forKey: .board)
     }
 
     var model: PhotoCollection {
@@ -410,7 +434,8 @@ private struct CollectionRow: Codable {
                         coverPhotoID: cover_photo_id, frame: frame,
                         visibility: .init(rawValue: visibility) ?? .private,
                         likeCount: like_count ?? 0, commentCount: comment_count ?? 0,
-                        owner: owner?.model)
+                        owner: owner?.model,
+                        font: font.flatMap(BatchFont.init(rawValue:)), board: board?.value)
     }
 }
 

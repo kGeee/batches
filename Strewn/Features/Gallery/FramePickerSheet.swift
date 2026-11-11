@@ -3,6 +3,8 @@ import SwiftUI
 /// Owner-only controls for how a pile is framed. Changes apply for every viewer.
 struct FramePickerSheet: View {
     @Binding var frame: FrameStyle
+    /// Whether the batch opens as a freehand board instead of one of the frame's layouts.
+    @Binding var boardOn: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -34,15 +36,22 @@ struct FramePickerSheet: View {
                 }
             }
             section("Layout") {
-                HStack(spacing: 8) {
-                    chip("One at a time", selected: frame.layout == .single) { frame.layout = .single }
-                    chip("Two columns", selected: frame.layout == .twoColumn) { frame.layout = .twoColumn }
-                    Spacer()
-                    Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
+                if frame.kind == .filmStrip {
+                    Text("Film is always shown as a roll.").font(.subheadline).foregroundStyle(.secondary)
+                        .frame(height: 36, alignment: .leading)
+                } else {
+                    HStack(spacing: 8) {
+                        chip("One by one", selected: !boardOn && frame.layout == .single) { boardOn = false; frame.layout = .single }
+                        chip("Two columns", selected: !boardOn && frame.layout == .twoColumn) { boardOn = false; frame.layout = .twoColumn }
+                        chip("Board", selected: boardOn) { boardOn = true }
+                    }
                 }
             }
         }
         .padding(20)
+        .overlay(alignment: .topTrailing) {
+            Button("Done") { dismiss() }.font(.subheadline.weight(.semibold)).padding(.top, 16).padding(.trailing, 20)
+        }
         .tint(.strewnAccent)
     }
 
@@ -55,7 +64,7 @@ struct FramePickerSheet: View {
 
     private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.subheadline.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
+            Text(title).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.85).padding(.horizontal, 7).padding(.vertical, 8)
         }
         .buttonStyle(.bordered)
         .tint(selected ? .strewnAccent : .secondary)

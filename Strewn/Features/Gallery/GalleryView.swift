@@ -24,6 +24,8 @@ struct GalleryView: View {
     @State private var renaming = false
     @State private var renameDraft = ""
     @State private var showReorder = false
+    @State private var showFont = false
+    @State private var arrangingBoard = false
     @State private var reporting: ReportTarget?
     @State private var confirmingBlock = false
     @State private var picked: [PhotosPickerItem] = []
@@ -55,6 +57,8 @@ struct GalleryView: View {
                                 FilmRollView(collection: collection, namespace: namespace,
                                              availableHeight: geo.size.height - 60, width: geo.size.width,
                                              onView: { viewerPhoto = $0 })
+                            } else if collection.showsBoard {
+                                boardCanvas(width: geo.size.width)
                             } else if frame.layout == .single {
                                 LazyVStack(spacing: 22) { photoCells(maxPhotoHeight: available) }
                                     .padding(.horizontal, 12)
@@ -87,11 +91,19 @@ struct GalleryView: View {
         .sensoryFeedback(.impact(weight: .light), trigger: pullDistance > PullToDismiss.threshold) { _, past in past }
         .accessibilityAction(.escape, close)   // VoiceOver's two-finger scrub
         .sheet(isPresented: $showFrames) {
-            FramePickerSheet(frame: Binding(get: { collection.frame }, set: { model.setFrame($0, for: collection.id) }))
+            FramePickerSheet(frame: Binding(get: { collection.frame }, set: { model.setFrame($0, for: collection.id) }),
+                             boardOn: Binding(get: { collection.board?.isOn == true }, set: { model.setBoardOn($0, for: collection.id) }))
                 .presentationDetents([.height(360)])
         }
         .sheet(isPresented: $showShare) { SharePileSheet(collectionID: collection.id) }
         .sheet(isPresented: $showReorder) { ReorderPhotosSheet(collectionID: collection.id) }
+        .sheet(isPresented: $showFont) {
+            BatchFontSheet(title: collection.title, current: collection.font) { model.setFont($0, for: collection.id) }
+                .presentationDetents([.medium, .large])
+        }
+        .fullScreenCover(isPresented: $arrangingBoard) {
+            BoardEditorView(collection: collection) { model.setBoard($0, for: collection.id) }
+        }
         .alert("Rename batch", isPresented: $renaming) {
             TextField("Name", text: $renameDraft)
             Button("Save") { model.rename(collection.id, to: renameDraft) }
@@ -105,7 +117,8 @@ struct GalleryView: View {
                             onRemove: canRemove(photo) ? { remove($0) } : nil,
                             shareLink: { AppModel.link(to: collection, photo: $0) },
                             onShareBatch: isOwner && !collection.isShared ? { openShareSettings() } : nil,
-                            onReport: canReport(photo) ? { report($0) } : nil)
+                            onReport: canReport(photo) ? { report($0) } : nil,
+                            captionFont: collection.font)
         }
         .sheet(item: $reporting) { target in
             ReportSheet(subject: target.subject, report: target.report, owner: target.owner)
@@ -171,7 +184,7 @@ struct GalleryView: View {
                     // Fit inside the visible height minus the frame, so tall portraits are
                     // shown whole instead of running off screen.
                     .frame(maxHeight: maxPhotoHeight - frame.insets.top - frame.insets.bottom)
-                    .photoFrame(frame, caption: photo.caption, frameNumber: index + 1)
+                    .photoFrame(frame, caption: photo.caption, frameNumber: index + 1, captionFont: collection.font)
                     .matchedGeometryEffect(id: photo.id, in: namespace)
                     .transition(inPile ? .pileRotation(angle) : .opacity)
                     .onTapGesture { viewerPhoto = photo }
@@ -184,6 +197,32 @@ struct GalleryView: View {
             }
             .frame(maxWidth: .infinity)
         }
+    }
+
+    /// The owner's freehand board. Same prints and menus as the other layouts, in the places the
+    /// owner put them; a photo with no place yet (a friend just added it) goes below the rest.
+    private func boardCanvas(width: CGFloat) -> some View {
+        let placements = BatchBoard.resolved(collection.board, photos: collection.photos, insets: frame.insets, width: width)
+        let stackIDs = Set(collection.pileStack().map(\.id))
+        return ZStack {
+            ForEach(Array(collection.photos.enumerated()), id: \.element.id) { index, photo in
+                if let place = placements[photo.id] {
+                    let inPile = stackIDs.contains(photo.id)
+                    let angle = inPile ? PileLayout.placement(for: photo, isTop: photo.id == collection.cover?.id).angle : .zero
+                    PhotoImage(photo: photo)
+                        .frame(width: BatchBoard.imageWidth(place, insets: frame.insets, boardWidth: width))
+                        .photoFrame(frame, caption: photo.caption, frameNumber: index + 1, captionFont: collection.font)
+                        .matchedGeometryEffect(id: photo.id, in: namespace)
+                        .transition(inPile ? .pileRotation(angle) : .opacity)
+                        .rotationEffect(place.angle)
+                        .onTapGesture { viewerPhoto = photo }
+                        .contextMenu { photoMenu(photo) }
+                        .position(x: place.x * width, y: place.y * width)
+                        .zIndex(Double(place.z))
+                }
+            }
+        }
+        .frame(width: width, height: BatchBoard.height(of: collection.photos, placements: placements, insets: frame.insets, width: width))
     }
 
     @ViewBuilder
@@ -218,7 +257,7 @@ struct GalleryView: View {
             Button(action: close) { headerIcon("chevron.left") }
                 .accessibilityLabel("Back to the desk")
             VStack(alignment: .leading, spacing: 1) {
-                Text(collection.title).titleStyle(.headline).lineLimit(1)
+                Text(collection.title).batchTitle(collection.font, .headline).lineLimit(1)
                 Text(subtitle).metaStyle().lineLimit(1)
             }
             // The big title says it at the top; the header takes over once that scrolls away.
@@ -247,6 +286,11 @@ struct GalleryView: View {
                     .accessibilityLabel("Frames")
                 Menu {
                     Button("Rename", systemImage: "pencil", action: startRename)
+                    Button("Font", systemImage: "textformat") { showFont = true }
+                    if frame.kind != .filmStrip {
+                        Button("Arrange board", systemImage: "hand.draw") { arrangingBoard = true }
+                            .disabled(collection.photos.isEmpty)
+                    }
                     Button("Reorder photos", systemImage: "arrow.up.arrow.down") { showReorder = true }
                         .disabled(collection.photos.count < 2)
                 } label: { headerIcon("ellipsis") }
@@ -284,7 +328,7 @@ struct GalleryView: View {
     /// The pile's title page: what it is, where and when, and whose.
     private var intro: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(collection.title).titleStyle(.largeTitle, weight: .bold)
+            Text(collection.title).batchTitle(collection.font, .largeTitle, weight: .bold)
                 .fixedSize(horizontal: false, vertical: true)
                 // Your own pile's title is also the quickest way to rename it.
                 .onTapGesture { if isOwner { startRename() } }

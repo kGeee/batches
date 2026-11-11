@@ -94,8 +94,23 @@ struct ProfileView: View {
             AvatarView(user: shown, size: 64)
             VStack(alignment: .leading, spacing: 2) {
                 Text(shown.displayName).titleStyle(.title2, weight: .bold)
-                Text("\(piles.count.counted("batch", plural: "batches")) · \(shown.followerCount.counted("follower")) · \(shown.followingCount) following")
-                    .metaStyle().lineLimit(2)
+                if isMe {
+                    Text(piles.count.counted("batch", plural: "batches")).metaStyle()
+                    // Your own counts open the lists of who they are.
+                    HStack(spacing: 4) {
+                        NavigationLink(value: FollowListRoute(user: shown, tab: .followers)) {
+                            Text(shown.followerCount.counted("follower")).metaStyle().underline().roomyTapTarget()
+                        }
+                        Text("·").metaStyle()
+                        NavigationLink(value: FollowListRoute(user: shown, tab: .following)) {
+                            Text("\(shown.followingCount) following").metaStyle().underline().roomyTapTarget()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text("\(piles.count.counted("batch", plural: "batches")) · \(shown.followerCount.counted("follower")) · \(shown.followingCount) following")
+                        .metaStyle().lineLimit(2)
+                }
             }
             Spacer()
             if !isMe && !model.isBlocked(shown) { FollowButton(user: shown) }

@@ -16,7 +16,7 @@ for f in "$@"; do
     s/^select \* from finish\(\);/reset role;\ninsert into tap_out (line) select * from finish();\nselect string_agg(line, chr(10) order by n) as tap from tap_out;/m;
   ' "$f" > "$tmp"
   echo "# $f"
-  out=$(supabase db query --linked -o json --file "$tmp" 2>&1 | grep -v '^Initialising' || true)
+  out=$(supabase db query --linked -o json --file "$tmp" 2>&1 | grep -v -e '^Initialising' -e '^A new version of Supabase CLI' -e '^We recommend updating' || true)
   tap=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["rows"][0]["tap"])' 2>/dev/null) || { echo "$out"; status=1; continue; }
   echo "$tap"
   if printf '%s\n' "$tap" | grep -q -e '^not ok' -e 'Looks like'; then status=1; fi

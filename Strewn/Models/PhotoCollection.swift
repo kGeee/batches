@@ -25,6 +25,10 @@ struct PhotoCollection: Identifiable, Hashable, Codable {
     var canAdd = false
     /// Profiles of the people who added photos, so each one can say whose it is.
     var contributors: [User] = []
+    /// The owner's choice of typeface; nil means the app's default. Everyone viewing sees it.
+    var font: BatchFont? = nil
+    /// The owner's freehand arrangement; nil until they make one. Everyone viewing sees it.
+    var board: BatchBoard? = nil
 
     enum Visibility: String, Codable, CaseIterable, Identifiable {
         case `private`, people, followers, `public`
@@ -59,6 +63,9 @@ struct PhotoCollection: Identifiable, Hashable, Codable {
     }
 
     var isShared: Bool { visibility != .private }
+
+    /// Whether the batch opens as a freehand board. A roll of film always opens as a roll.
+    var showsBoard: Bool { board?.isOn == true && frame.kind != .filmStrip }
 
     /// The person who added `photo`, when that wasn't the owner.
     func adder(of photo: Photo) -> User? {

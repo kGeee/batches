@@ -70,7 +70,7 @@ struct NewPileSheet: View {
                     }
                     .foregroundStyle(Color.strewnAccent)
                     .frame(width: 220, height: 170)
-                    .background(Color.paper.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
+                    .background(Color.card, in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.strewnAccent.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
                     .rotationEffect(.degrees(-2))
                 } else {
@@ -142,12 +142,13 @@ struct NewPileSheet: View {
     private var createButton: some View {
         Button { Task { await create() } } label: {
             Group {
-                if isImporting { ProgressView().tint(.white) } else { Text(selection.isEmpty ? "Choose photos to begin" : "Make the batch") }
+                if isImporting { ProgressView().tint(Color.onAccent) } else { Text(selection.isEmpty ? "Choose photos to begin" : "Make the batch") }
             }
             .font(.headline)
             .frame(maxWidth: .infinity, minHeight: 30)
         }
         .buttonStyle(.borderedProminent)
+        .foregroundStyle(selection.isEmpty ? Color.secondary : Color.onAccent)
         .controlSize(.large)
         .disabled(selection.isEmpty || isImporting)
         .padding(.horizontal, 20)

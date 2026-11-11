@@ -6,6 +6,8 @@ struct PhotoFrameModifier: ViewModifier {
     let style: FrameStyle
     var caption: String?
     var frameNumber: Int = 1
+    /// The batch's font, when its owner picked one. Polaroid captions are otherwise handwritten.
+    var captionFont: BatchFont? = nil
 
     func body(content: Content) -> some View {
         let inset = style.insets
@@ -23,7 +25,7 @@ struct PhotoFrameModifier: ViewModifier {
                 .overlay(alignment: .bottomLeading) {
                     if let caption {
                         Text(caption)
-                            .font(.custom("Bradley Hand", size: max(15, min(26, style.borderWidth * 1.5))))
+                            .font(captionFont?.font(.subheadline) ?? .custom("Bradley Hand", size: max(15, min(26, style.borderWidth * 1.5))))
                             .foregroundStyle(Color(white: 0.17))
                             .lineLimit(1)
                             .frame(height: inset.bottom)
@@ -59,8 +61,8 @@ struct PhotoFrameModifier: ViewModifier {
 }
 
 extension View {
-    func photoFrame(_ style: FrameStyle, caption: String? = nil, frameNumber: Int = 1) -> some View {
-        modifier(PhotoFrameModifier(style: style, caption: caption, frameNumber: frameNumber))
+    func photoFrame(_ style: FrameStyle, caption: String? = nil, frameNumber: Int = 1, captionFont: BatchFont? = nil) -> some View {
+        modifier(PhotoFrameModifier(style: style, caption: caption, frameNumber: frameNumber, captionFont: captionFont))
     }
 }
 

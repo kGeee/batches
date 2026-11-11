@@ -159,7 +159,7 @@ struct BlockedPeopleView: View {
                     Spacer()
                     Button("Unblock") { unblocking = user }.buttonStyle(.bordered).controlSize(.small)
                 }
-                .listRowBackground(Color.paper.opacity(0.7))
+                .listRowBackground(Color.card)
             }
         }
         .scrollContentBackground(.hidden)

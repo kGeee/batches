@@ -12,6 +12,12 @@ extension Color {
     /// Undyed linen: warm oatmeal by day, a deep brown-grey at night.
     static let mat = Color(light: Color(red: 0.89, green: 0.86, blue: 0.80), dark: Color(red: 0.15, green: 0.14, blue: 0.12))
 
+    /// Text and icons on the accent. The accent is bright amber at night, where white washes out.
+    static let onAccent = Color(light: .white, dark: Color(white: 0.1))
+    /// A panel on the mat, such as the account rows. Paper by day; at night paper would sit
+    /// white text on a near-white panel, so it's a lift of the mat instead.
+    static let card = Color(light: Color(red: 0.984, green: 0.980, blue: 0.965).opacity(0.7), dark: Color.white.opacity(0.08))
+
     init(light: Color, dark: Color) {
         self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light) })
     }
@@ -28,6 +34,11 @@ extension View {
     /// like the edge printing on film.
     func titleStyle(_ style: Font.TextStyle = .title3, weight: Font.Weight = .semibold) -> some View {
         font(.system(style, design: .serif, weight: weight))
+    }
+
+    /// A small text link that's easier to hit than its text is tall, without taking more room.
+    func roomyTapTarget() -> some View {
+        padding(.vertical, 12).contentShape(Rectangle()).padding(.vertical, -12)
     }
 
     func metaStyle(_ style: Font.TextStyle = .caption2) -> some View {

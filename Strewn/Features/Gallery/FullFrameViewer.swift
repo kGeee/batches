@@ -20,6 +20,8 @@ struct FullFrameViewer: View {
     var onShareBatch: (() -> Void)?
     /// Someone else's photo: report it.
     var onReport: ((Photo) -> Void)?
+    /// The batch's font, for captions.
+    var captionFont: BatchFont?
 
     @Environment(\.dismiss) private var dismiss
     @State private var currentID: UUID?
@@ -36,7 +38,9 @@ struct FullFrameViewer: View {
 
     init(photos: [Photo], start: Photo, coverID: UUID? = nil,
          onEdit: ((Photo) -> Void)? = nil, onSetCover: ((Photo) -> Void)? = nil, onRemove: ((Photo) -> Void)? = nil,
-         shareLink: ((Photo) -> URL)? = nil, onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil) {
+         shareLink: ((Photo) -> URL)? = nil, onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil,
+         captionFont: BatchFont? = nil) {
+        self.captionFont = captionFont
         self.photos = photos.isEmpty ? [start] : photos
         self.coverID = coverID
         self.onEdit = onEdit
@@ -104,7 +108,7 @@ struct FullFrameViewer: View {
             Spacer()
             VStack(spacing: 12) {
                 if let caption = current?.caption {
-                    Text(caption).titleStyle(.headline, weight: .regular)
+                    Text(caption).batchTitle(captionFont, .headline, weight: .regular)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
                 }
