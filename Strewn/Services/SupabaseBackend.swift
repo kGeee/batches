@@ -172,6 +172,50 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
             .eq("follower_id", value: me.uuidString).eq("followee_id", value: userID.uuidString).execute()
     }
 
+    // MARK: Photo likes and comments
+
+    func reactions(to photoIDs: [UUID]) async throws -> [UUID: PhotoReactions] {
+        guard !photoIDs.isEmpty else { return [:] }
+        let me = try await myID()
+        let ids = photoIDs.map(\.uuidString)
+        // Row level security leaves out photos you can't see and people across a block.
+        async let likeRows: [LikeRow] = client.from("photo_likes").select("photo_id, user_id").in("photo_id", values: ids).execute().value
+        async let commentRows: [CommentPhotoRow] = client.from("photo_comments").select("photo_id").in("photo_id", values: ids).execute().value
+        let (likes, comments) = try await (likeRows, commentRows)
+        var result = Dictionary(uniqueKeysWithValues: photoIDs.map { ($0, PhotoReactions()) })
+        for like in likes {
+            result[like.photo_id]?.likeCount += 1
+            if like.user_id == me { result[like.photo_id]?.likedByMe = true }
+        }
+        for comment in comments { result[comment.photo_id]?.commentCount += 1 }
+        return result
+    }
+
+    func setLiked(_ liked: Bool, photoID: UUID) async throws {
+        let me = try await myID()
+        if liked {
+            try await client.from("photo_likes").upsert(LikeRow(photo_id: photoID, user_id: me), ignoreDuplicates: true).execute()
+        } else {
+            try await client.from("photo_likes").delete().eq("photo_id", value: photoID.uuidString).eq("user_id", value: me.uuidString).execute()
+        }
+    }
+
+    func comments(on photoID: UUID) async throws -> [PhotoComment] {
+        let rows: [CommentRow] = try await client.from("photo_comments")
+            .select("id, photo_id, author_id, body, created_at, author:profiles!author_id(*)")
+            .eq("photo_id", value: photoID.uuidString).order("created_at").execute().value
+        return rows.map(\.model)
+    }
+
+    func addComment(id: UUID, body: String, photoID: UUID) async throws {
+        let me = try await myID()
+        try await client.from("photo_comments").insert(NewComment(id: id, photo_id: photoID, author_id: me, body: body)).execute()
+    }
+
+    func deleteComment(_ id: UUID) async throws {
+        try await client.from("photo_comments").delete().eq("id", value: id.uuidString).execute()
+    }
+
     // MARK: Your desk
 
     func deskLayout() async throws -> DeskLayout? {
@@ -324,8 +368,8 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
     func report(_ report: Report) async throws {
         // Reports can't be read back, so nothing is returned.
         try await client.from("reports").insert(ReportRow(reported_user_id: report.userID, collection_id: report.collectionID,
-                                                           photo_id: report.photoID, reason: report.reason.rawValue,
-                                                           details: report.details)).execute()
+                                                           photo_id: report.photoID, comment_id: report.commentID,
+                                                           reason: report.reason.rawValue, details: report.details)).execute()
     }
 
     private static func objectPaths(_ sharePath: String) -> [String] {
@@ -391,7 +435,18 @@ private struct DeskLayoutRow: Decodable { let layout: Lenient<DeskLayout> }
 private struct NewDeskLayout: Encodable { let owner_id: UUID; let layout: DeskLayout }
 private struct BlockRow: Encodable { let blocker_id: UUID; let blocked_id: UUID }
 private struct ReportRow: Encodable {
-    let reported_user_id: UUID?; let collection_id: UUID?; let photo_id: UUID?; let reason: String; let details: String?
+    // Nil fields are left out, so reports without a comment still work before the comment migration.
+    let reported_user_id: UUID?; let collection_id: UUID?; let photo_id: UUID?; let comment_id: UUID?
+    let reason: String; let details: String?
+}
+private struct LikeRow: Codable { let photo_id: UUID; let user_id: UUID }
+private struct CommentPhotoRow: Decodable { let photo_id: UUID }
+private struct NewComment: Encodable { let id: UUID; let photo_id: UUID; let author_id: UUID; let body: String }
+private struct CommentRow: Decodable {
+    let id: UUID; let photo_id: UUID; let author_id: UUID; let body: String; let created_at: Date; let author: ProfileRow?
+    var model: PhotoComment {
+        PhotoComment(id: id, photoID: photo_id, author: author?.model, authorID: author_id, body: body, createdAt: created_at)
+    }
 }
 
 private struct CollectionRow: Codable {
@@ -403,17 +458,20 @@ private struct CollectionRow: Codable {
     /// A name this build doesn't know reads as nil, the default look.
     let font: String?
     let board: Lenient<BatchBoard>?
+    let description: String?
+    let background: String?
 
     init(_ c: PhotoCollection) {
         id = c.id; owner_id = c.ownerID; title = c.title; place = c.place; shot_on = c.shotOn
         cover_photo_id = c.coverPhotoID; frame = c.frame; visibility = c.visibility.rawValue
         like_count = nil; comment_count = nil; photos = nil; owner = nil
         font = c.font?.rawValue; board = c.board.map { Lenient($0) }
+        description = c.description; background = c.background?.raw
     }
 
     // Writes send only the pile's own columns; counts are kept by the database.
     enum CodingKeys: String, CodingKey {
-        case id, owner_id, title, place, shot_on, cover_photo_id, frame, visibility, like_count, comment_count, photos, owner, font, board
+        case id, owner_id, title, place, shot_on, cover_photo_id, frame, visibility, like_count, comment_count, photos, owner, font, board, description, background
     }
 
     func encode(to encoder: Encoder) throws {
@@ -426,6 +484,8 @@ private struct CollectionRow: Codable {
         // batch that never had either saves fine before the migration adding them has run.
         try c.encodeIfPresent(font, forKey: .font)
         try c.encodeIfPresent(board?.value, forKey: .board)
+        try c.encodeIfPresent(description, forKey: .description)
+        try c.encodeIfPresent(background, forKey: .background)
     }
 
     var model: PhotoCollection {
@@ -435,7 +495,8 @@ private struct CollectionRow: Codable {
                         visibility: .init(rawValue: visibility) ?? .private,
                         likeCount: like_count ?? 0, commentCount: comment_count ?? 0,
                         owner: owner?.model,
-                        font: font.flatMap(BatchFont.init(rawValue:)), board: board?.value)
+                        font: font.flatMap(BatchFont.init(rawValue:)), board: board?.value,
+                        description: description, background: background.flatMap(BatchBackground.init(raw:)))
     }
 }
 

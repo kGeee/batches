@@ -7,6 +7,7 @@ struct DeskPileView: View {
     let collection: PhotoCollection
     let namespace: Namespace.ID
     var spread: CGFloat = 1
+    @Environment(\.tiltedPiles) private var tilted
 
     var body: some View {
         if collection.frame.kind == .filmStrip {
@@ -25,7 +26,7 @@ struct DeskPileView: View {
             let stack = collection.pileStack()
             ZStack {
                 ForEach(Array(stack.enumerated()), id: \.element.id) { index, photo in
-                    let place = PileLayout.placement(for: photo, isTop: index == stack.count - 1)
+                    let place = PileLayout.placement(for: photo, isTop: index == stack.count - 1, tilted: tilted)
                     PrintView(photo: photo, paper: side * 0.018)
                         .frame(width: side * place.widthFraction)
                         .matchedGeometryEffect(id: photo.id, in: namespace)

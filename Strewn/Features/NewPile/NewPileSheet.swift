@@ -16,7 +16,8 @@ struct NewPileSheet: View {
     @FocusState private var naming: Bool
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            PaperHeader(title: "New batch", onCancel: { dismiss() })
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     picker
@@ -45,14 +46,9 @@ struct NewPileSheet: View {
                 .padding(.bottom, 20)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(DeskMatBackground())
             .safeAreaInset(edge: .bottom) { createButton }
-            .navigationTitle("New batch")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            }
         }
+        .background(DeskMatBackground())
         .tint(.strewnAccent)
         .task(id: selection) { await loadPreviews() }
     }
@@ -72,7 +68,6 @@ struct NewPileSheet: View {
                     .frame(width: 220, height: 170)
                     .background(Color.card, in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.strewnAccent.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
-                    .rotationEffect(.degrees(-2))
                 } else {
                     ForEach(Array(previews.enumerated().reversed()), id: \.offset) { index, image in
                         let fan = Self.fan[index % Self.fan.count]
@@ -82,7 +77,7 @@ struct NewPileSheet: View {
                             .frame(width: 150, height: 150 * image.size.height / max(image.size.width, 1))
                             .clipped()
                             .photoFrame(frame)
-                            .rotationEffect(.degrees(fan.angle))
+                            // Squared up, like the pile it becomes.
                             .offset(x: fan.x, y: fan.y)
                     }
                 }

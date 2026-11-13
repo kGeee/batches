@@ -362,6 +362,49 @@ final class AppModel {
         update(collectionID) { $0.frame = frame }
     }
 
+    /// The short note under the title. Empty clears it.
+    func setDescription(_ text: String, for collectionID: UUID) {
+        let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(PhotoCollection.descriptionLimit))
+        update(collectionID) { $0.description = trimmed }
+    }
+
+    /// Sets the background, and the nearest wall builds 7 and 8 understand, so they show something close.
+    func setBackground(_ background: BatchBackground, for collectionID: UUID) {
+        update(collectionID) { pile in
+            pile.background = background
+            pile.frame.wall = background.legacyWall
+        }
+    }
+
+    // MARK: Photo likes and comments
+
+    /// Likes and comment counts for a batch's photos, or nil if they can't be loaded (no signal,
+    /// or a server without the photo tables yet). Callers hide the controls then.
+    func reactions(for photos: [Photo]) async -> [UUID: PhotoReactions]? {
+        try? await backend.reactions(to: photos.map(\.id))
+    }
+
+    func setLiked(_ liked: Bool, photoID: UUID) async throws {
+        try await backend.setLiked(liked, photoID: photoID)
+    }
+
+    func comments(on photoID: UUID) async throws -> [PhotoComment] {
+        let hidden = Set(blocked.map(\.id))
+        return try await backend.comments(on: photoID).filter { !hidden.contains($0.authorID) }
+    }
+
+    func addComment(_ body: String, to photoID: UUID) async throws -> PhotoComment {
+        guard let me else { throw BackendError.notSignedIn }
+        let text = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(PhotoComment.maxLength))
+        let comment = PhotoComment(id: UUID(), photoID: photoID, author: me, authorID: me.id, body: text, createdAt: .now)
+        try await backend.addComment(id: comment.id, body: text, photoID: photoID)
+        return comment
+    }
+
+    func deleteComment(_ comment: PhotoComment) async throws {
+        try await backend.deleteComment(comment.id)
+    }
+
     func setFont(_ font: BatchFont, for collectionID: UUID) {
         update(collectionID) { $0.font = font }
     }

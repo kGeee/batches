@@ -30,31 +30,24 @@ struct FollowListView: View {
     private var people: [User]? { tab == .followers ? followers : following }
 
     var body: some View {
-        List {
-            ForEach(people ?? []) { person in
-                NavigationLink(value: person) {
-                    PersonRow(user: person) {
-                        if person.id != model.me?.id { FollowButton(user: person) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                PaperSegmented(selection: $tab, options: FollowListRoute.Tab.allCases.map { (value: $0, title: label($0)) })
+                if let people, !people.isEmpty {
+                    PaperSection {
+                        ForEach(Array(people.enumerated()), id: \.element.id) { index, person in
+                            if index > 0 { PaperDivider(inset: 66) }
+                            PeopleListRow(user: person)
+                        }
                     }
+                } else {
+                    emptyState.frame(maxWidth: .infinity).padding(.top, 40)
                 }
-                .listRowBackground(Color.clear)
             }
+            .padding(18)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(DeskMatBackground())
-        .overlay { emptyState }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Picker("List", selection: $tab) {
-                ForEach(FollowListRoute.Tab.allCases) { Text(label($0)).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.bar)
-        }
-        .navigationTitle(user.id == model.me?.id ? "Your people" : "@\(user.handle)")
-        .navigationBarTitleDisplayMode(.inline)
+        .paperNavigationTitle(user.id == model.me?.id ? "Your people" : "@\(user.handle)")
         .refreshable { await load() }
         .task { await load() }
         // Following or unfollowing someone from a row changes the Following list.

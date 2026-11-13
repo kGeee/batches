@@ -19,12 +19,17 @@ struct GalleryView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var systemScheme
+    @Environment(\.tiltedPiles) private var tiltedPiles
     @State private var showFrames = false
     @State private var showShare = false
     @State private var renaming = false
     @State private var renameDraft = ""
     @State private var showReorder = false
     @State private var showFont = false
+    @State private var showDescription = false
+    /// Likes and comment counts by photo; nil while loading, or when they can't be loaded.
+    @State private var reactions: [UUID: PhotoReactions]?
+    @State private var commentsPhoto: Photo?
     @State private var arrangingBoard = false
     @State private var reporting: ReportTarget?
     @State private var confirmingBlock = false
@@ -47,7 +52,7 @@ struct GalleryView: View {
         GeometryReader { geo in
             let available = geo.size.height - 120   // header and caption row
             ZStack {
-                wall.ignoresSafeArea().opacity(appeared ? 1 - 0.6 * pullProgress : 0)
+                collection.backdrop.view.ignoresSafeArea().opacity(appeared ? 1 - 0.6 * pullProgress : 0)
                 VStack(spacing: 0) {
                     header.opacity(appeared ? 1 - 0.8 * pullProgress : 0)
                     ScrollView {
@@ -80,7 +85,9 @@ struct GalleryView: View {
         }
         // A light wall is light in dark mode too, and a dark wall dark in light mode, so the
         // text and controls on it follow the wall, not the system. The desk follows the system.
-        .environment(\.colorScheme, wallScheme ?? systemScheme)
+        .environment(\.colorScheme, collection.backdrop.scheme ?? systemScheme)
+        .tint(collection.backdrop.neutralControls ? Color.primary : Color.strewnAccent)
+        .task(id: collection.photos.map(\.id)) { reactions = await model.reactions(for: collection.photos) }
         .onAppear { withAnimation(.easeOut(duration: 0.35).delay(0.1)) { appeared = true } }
         .task {
             guard let startPhotoID, let photo = collection.photos.first(where: { $0.id == startPhotoID }) else { return }
@@ -92,8 +99,9 @@ struct GalleryView: View {
         .accessibilityAction(.escape, close)   // VoiceOver's two-finger scrub
         .sheet(isPresented: $showFrames) {
             FramePickerSheet(frame: Binding(get: { collection.frame }, set: { model.setFrame($0, for: collection.id) }),
-                             boardOn: Binding(get: { collection.board?.isOn == true }, set: { model.setBoardOn($0, for: collection.id) }))
-                .presentationDetents([.height(360)])
+                             boardOn: Binding(get: { collection.board?.isOn == true }, set: { model.setBoardOn($0, for: collection.id) }),
+                             background: Binding(get: { collection.backdrop }, set: { model.setBackground($0, for: collection.id) }))
+                .presentationDetents([.height(430)])
         }
         .sheet(isPresented: $showShare) { SharePileSheet(collectionID: collection.id) }
         .sheet(isPresented: $showReorder) { ReorderPhotosSheet(collectionID: collection.id) }
@@ -101,13 +109,21 @@ struct GalleryView: View {
             BatchFontSheet(title: collection.title, current: collection.font) { model.setFont($0, for: collection.id) }
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showDescription) {
+            BatchDescriptionSheet(current: collection.description) { model.setDescription($0, for: collection.id) }
+                .presentationDetents([.medium])
+        }
+        .sheet(item: $commentsPhoto) { photo in
+            PhotoCommentsSheet(photo: photo, collection: collection) { setCommentCount($0, for: photo) }
+                .presentationDetents([.medium, .large])
+        }
         .fullScreenCover(isPresented: $arrangingBoard) {
             BoardEditorView(collection: collection) { model.setBoard($0, for: collection.id) }
         }
-        .alert("Rename batch", isPresented: $renaming) {
-            TextField("Name", text: $renameDraft)
-            Button("Save") { model.rename(collection.id, to: renameDraft) }
-            Button("Cancel", role: .cancel) {}
+        .sheet(isPresented: $renaming) {
+            PaperTextPrompt(title: "Rename batch", placeholder: "Name", initial: collection.title) { model.rename(collection.id, to: $0) }
+                .presentationDetents([.height(200)])
+                .environment(\.colorScheme, systemScheme)
         }
         .fullScreenCover(item: $viewerPhoto) { photo in
             // Just the photo you tapped: no paging sideways through the rest of the pile.
@@ -118,7 +134,11 @@ struct GalleryView: View {
                             shareLink: { AppModel.link(to: collection, photo: $0) },
                             onShareBatch: isOwner && !collection.isShared ? { openShareSettings() } : nil,
                             onReport: canReport(photo) ? { report($0) } : nil,
-                            captionFont: collection.font)
+                            captionFont: collection.font,
+                            reactions: reactions,
+                            onLike: reactions == nil ? nil : { like($0) },
+                            commentsBatch: reactions == nil ? nil : collection,
+                            onCommentCount: { setCommentCount($1, for: $0) })
         }
         .sheet(item: $reporting) { target in
             ReportSheet(subject: target.subject, report: target.report, owner: target.owner)
@@ -178,7 +198,7 @@ struct GalleryView: View {
         let stackIDs = Set(collection.pileStack().map(\.id))
         ForEach(Array(collection.photos.enumerated()), id: \.element.id) { index, photo in
             let inPile = stackIDs.contains(photo.id)
-            let angle = inPile ? PileLayout.placement(for: photo, isTop: photo.id == collection.cover?.id).angle : .zero
+            let angle = inPile ? PileLayout.placement(for: photo, isTop: photo.id == collection.cover?.id, tilted: tiltedPiles).angle : .zero
             VStack(spacing: 8) {
                 PhotoImage(photo: photo)
                     // Fit inside the visible height minus the frame, so tall portraits are
@@ -191,7 +211,7 @@ struct GalleryView: View {
                     .contextMenu { photoMenu(photo) }
                 // Two columns are a contact sheet: the prints alone read better.
                 if frame.layout == .single {
-                    PhotoMetaRow(collection: collection, photo: photo, index: index)
+                    PhotoMetaRow(collection: collection, photo: photo, index: index, reactions: reactions?[photo.id])
                         .opacity(appeared ? 1 : 0)
                 }
             }
@@ -208,7 +228,7 @@ struct GalleryView: View {
             ForEach(Array(collection.photos.enumerated()), id: \.element.id) { index, photo in
                 if let place = placements[photo.id] {
                     let inPile = stackIDs.contains(photo.id)
-                    let angle = inPile ? PileLayout.placement(for: photo, isTop: photo.id == collection.cover?.id).angle : .zero
+                    let angle = inPile ? PileLayout.placement(for: photo, isTop: photo.id == collection.cover?.id, tilted: tiltedPiles).angle : .zero
                     PhotoImage(photo: photo)
                         .frame(width: BatchBoard.imageWidth(place, insets: frame.insets, boardWidth: width))
                         .photoFrame(frame, caption: photo.caption, frameNumber: index + 1, captionFont: collection.font)
@@ -228,6 +248,10 @@ struct GalleryView: View {
     @ViewBuilder
     private func photoMenu(_ photo: Photo) -> some View {
         Button("View", systemImage: "arrow.up.left.and.arrow.down.right") { viewerPhoto = photo }
+        if let mine = reactions?[photo.id] {
+            Button(mine.likedByMe ? "Unlike" : "Like", systemImage: mine.likedByMe ? "heart.slash" : "heart") { like(photo) }
+            Button("Comments", systemImage: "bubble.left") { commentsPhoto = photo }
+        }
         if canEdit(photo) {
             Button("Edit", systemImage: "slider.horizontal.3") { editingPhoto = photo }
         }
@@ -286,6 +310,7 @@ struct GalleryView: View {
                     .accessibilityLabel("Frames")
                 Menu {
                     Button("Rename", systemImage: "pencil", action: startRename)
+                    Button("Description", systemImage: "text.alignleft") { showDescription = true }
                     Button("Font", systemImage: "textformat") { showFont = true }
                     if frame.kind != .filmStrip {
                         Button("Arrange board", systemImage: "hand.draw") { arrangingBoard = true }
@@ -334,6 +359,19 @@ struct GalleryView: View {
                 .onTapGesture { if isOwner { startRename() } }
                 .accessibilityAddTraits(isOwner ? .isButton : [])
                 .accessibilityHint(isOwner ? "Renames the batch" : "")
+            if let text = collection.description, !text.isEmpty {
+                Text(text)
+                    .font((collection.font ?? .classic).font(.callout))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onTapGesture { if isOwner { showDescription = true } }
+                    .accessibilityAddTraits(isOwner ? .isButton : [])
+                    .accessibilityHint(isOwner ? "Edits the description" : "")
+            } else if isOwner {
+                Button("Add a description", systemImage: "plus") { showDescription = true }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
             Text(introLine).metaStyle(.caption)
             if !isOwner, let owner = collection.owner {
                 Button { onOpenOwner?(owner) } label: {
@@ -458,26 +496,21 @@ struct GalleryView: View {
         onClose()
     }
 
-    /// A film-strip pile is a roll of negatives, so it's always shown dark, like a light table
-    /// with the lights down, whatever wall the owner picked.
-    private var effectiveWall: FrameStyle.Wall {
-        frame.kind == .filmStrip ? .dark : frame.wall
-    }
-
-    @ViewBuilder private var wall: some View {
-        switch effectiveWall {
-        case .light: Color(white: 0.953)
-        case .dark: Color(white: 0.07)
-        case .desk: DeskMatBackground()
+    /// Optimistic: the heart fills straight away and goes back if the server says no.
+    private func like(_ photo: Photo) {
+        guard var mine = reactions?[photo.id] else { return }
+        let before = mine
+        mine.likedByMe.toggle()
+        mine.likeCount = max(0, mine.likeCount + (mine.likedByMe ? 1 : -1))
+        reactions?[photo.id] = mine
+        Task {
+            do { try await model.setLiked(mine.likedByMe, photoID: photo.id) }
+            catch { reactions?[photo.id] = before }
         }
     }
 
-    private var wallScheme: ColorScheme? {
-        switch effectiveWall {
-        case .light: .light
-        case .dark: .dark
-        case .desk: nil
-        }
+    private func setCommentCount(_ count: Int, for photo: Photo) {
+        reactions?[photo.id]?.commentCount = count
     }
 }
 
@@ -487,11 +520,13 @@ struct PhotoMetaRow: View {
     let collection: PhotoCollection
     let photo: Photo
     let index: Int
+    var reactions: PhotoReactions? = nil
 
     var body: some View {
         HStack(spacing: 6) {
             Text(exifLine).metaStyle().lineLimit(1)
             Spacer(minLength: 4)
+            if let reactions { ReactionsLine(reactions: reactions) }
             if let adder = collection.adder(of: photo) {
                 HStack(spacing: 4) {
                     AvatarView(user: adder, size: 16)
@@ -579,7 +614,8 @@ private struct ReorderPhotosSheet: View {
     private var photos: [Photo] { model.myCollections.first { $0.id == collectionID }?.photos ?? [] }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            PaperHeader(title: "Reorder photos", cancelTitle: nil, confirmTitle: "Done", onConfirm: { dismiss() })
             List {
                 ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
                     HStack(spacing: 14) {
@@ -589,14 +625,14 @@ private struct ReorderPhotosSheet: View {
                         Text(String(format: "%02d", index + 1)).metaStyle(.subheadline)
                         if let caption = photo.caption { Text(caption).font(.subheadline).lineLimit(1) }
                     }
+                    .listRowBackground(Color.card)
                 }
                 .onMove { model.movePhotos(in: collectionID, from: $0, to: $1) }
             }
+            .scrollContentBackground(.hidden)
             .environment(\.editMode, .constant(.active))
-            .navigationTitle("Reorder photos")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+        .background(DeskMatBackground())
         .tint(.strewnAccent)
     }
 }

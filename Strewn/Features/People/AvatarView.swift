@@ -50,11 +50,9 @@ struct FollowButton: View {
         Button {
             if following { confirmUnfollow = true } else { Task { await model.toggleFollow(user) } }
         } label: {
-            Text(following ? "Following" : "Follow").font(.subheadline.weight(.semibold)).frame(minWidth: 76)
+            Text(following ? "Following" : "Follow").frame(minWidth: 70)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(following ? Color.secondary.opacity(0.25) : Color.strewnAccent)
-        .foregroundStyle(following ? Color.primary : Color.onAccent)
+        .buttonStyle(.paper(following ? .secondary : .primary, compact: true))
         .sensoryFeedback(.selection, trigger: following)
         .confirmationDialog("Unfollow @\(user.handle)?", isPresented: $confirmUnfollow, titleVisibility: .visible) {
             Button("Unfollow", role: .destructive) { Task { await model.toggleFollow(user) } }

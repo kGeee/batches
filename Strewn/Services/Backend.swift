@@ -35,6 +35,15 @@ protocol Backend: Sendable {
     func follow(_ userID: UUID) async throws
     func unfollow(_ userID: UUID) async throws
 
+    // Photo likes and comments
+    /// Likes and comment counts for these photos, as you may see them.
+    func reactions(to photoIDs: [UUID]) async throws -> [UUID: PhotoReactions]
+    func setLiked(_ liked: Bool, photoID: UUID) async throws
+    func comments(on photoID: UUID) async throws -> [PhotoComment]
+    func addComment(id: UUID, body: String, photoID: UUID) async throws
+    /// Your own comment, or any comment on a batch you own.
+    func deleteComment(_ id: UUID) async throws
+
     // Your desk
     /// How you've arranged your desk, or nil if you never have. Only you can read it.
     func deskLayout() async throws -> DeskLayout?
@@ -88,6 +97,7 @@ struct Report: Sendable {
     var userID: UUID? = nil
     var collectionID: UUID? = nil
     var photoID: UUID? = nil
+    var commentID: UUID? = nil
     var reason: Reason
     var details: String? = nil
 }
@@ -122,6 +132,13 @@ actor MockBackend: Backend {
     private var contributors: Set<Pair> = []   // members who may add photos
     private var blocks: Set<Pair> = []   // (blocker, blocked)
     private var desks: [UUID: DeskLayout] = [:]
+    private var photoLikes: Set<Pair> = []   // (photo, person)
+    // One comment from Maya, so the demo shows what comments look like and how to report one.
+    private var photoComments: [PhotoComment] = SampleData.collections.first?.photos.first.map {
+        [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000001")!, photoID: $0.id, author: SampleData.maya,
+                      authorID: SampleData.maya.id, body: "That light on the water. Which beach was this?",
+                      createdAt: .now.addingTimeInterval(-7200))]
+    } ?? []
 
     private struct Pair: Hashable { let a: UUID; let b: UUID }
 
@@ -168,6 +185,8 @@ actor MockBackend: Backend {
         contributors = contributors.filter { $0.b != me }
         blocks = blocks.filter { $0.a != me && $0.b != me }
         desks[me] = nil
+        photoLikes = photoLikes.filter { $0.b != me }
+        photoComments.removeAll { $0.authorID == me }
         people[me] = nil
         signedIn = nil
     }
@@ -212,6 +231,57 @@ actor MockBackend: Backend {
     func unfollow(_ userID: UUID) async throws {
         let me = try requireMe()
         follows.remove(Pair(a: me, b: userID))
+    }
+
+    // Photo likes and comments: the same rules as supabase/migrations/20261112000000.
+
+    func reactions(to photoIDs: [UUID]) async throws -> [UUID: PhotoReactions] {
+        let me = try requireMe()
+        var result: [UUID: PhotoReactions] = [:]
+        for id in photoIDs where canViewPhoto(id) {
+            let likers = photoLikes.filter { $0.a == id && ($0.b == me || !isBlocked(me, $0.b)) }
+            result[id] = PhotoReactions(likeCount: likers.count, likedByMe: likers.contains { $0.b == me },
+                                        commentCount: visibleComments(on: id, for: me).count)
+        }
+        return result
+    }
+
+    func setLiked(_ liked: Bool, photoID: UUID) async throws {
+        let me = try requireMe()
+        guard canViewPhoto(photoID) else { throw BackendError.notAllowed }
+        if liked { photoLikes.insert(Pair(a: photoID, b: me)) } else { photoLikes.remove(Pair(a: photoID, b: me)) }
+    }
+
+    func comments(on photoID: UUID) async throws -> [PhotoComment] {
+        let me = try requireMe()
+        guard canViewPhoto(photoID) else { return [] }
+        return visibleComments(on: photoID, for: me)
+    }
+
+    func addComment(id: UUID, body: String, photoID: UUID) async throws {
+        let me = try requireMe()
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canViewPhoto(photoID), !text.isEmpty, text.count <= PhotoComment.maxLength else { throw BackendError.notAllowed }
+        photoComments.append(PhotoComment(id: id, photoID: photoID, author: people[me], authorID: me, body: text, createdAt: .now))
+    }
+
+    func deleteComment(_ id: UUID) async throws {
+        let me = try requireMe()
+        guard let comment = photoComments.first(where: { $0.id == id }) else { return }
+        let owner = piles.values.first { $0.photos.contains { $0.id == comment.photoID } }?.ownerID
+        guard comment.authorID == me || owner == me else { throw BackendError.notAllowed }
+        photoComments.removeAll { $0.id == id }
+    }
+
+    private func canViewPhoto(_ id: UUID) -> Bool {
+        guard let me = signedIn, let pile = piles.values.first(where: { $0.photos.contains { $0.id == id } }),
+              canView(pile), let photo = pile.photos.first(where: { $0.id == id }) else { return false }
+        return photo.addedBy.map { $0 == me || !isBlocked(me, $0) } ?? true
+    }
+
+    private func visibleComments(on photoID: UUID, for me: UUID) -> [PhotoComment] {
+        photoComments.filter { $0.photoID == photoID && ($0.authorID == me || !isBlocked(me, $0.authorID)) }
+            .sorted { $0.createdAt < $1.createdAt }
     }
 
     // Your desk

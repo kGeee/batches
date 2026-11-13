@@ -22,6 +22,14 @@ struct FullFrameViewer: View {
     var onReport: ((Photo) -> Void)?
     /// The batch's font, for captions.
     var captionFont: BatchFont?
+    /// Likes and comment counts by photo; nil hides the controls (still loading, or unavailable).
+    var reactions: [UUID: PhotoReactions]?
+    var onLike: ((Photo) -> Void)?
+    /// The batch the photos are in, for the comments sheet.
+    var commentsBatch: PhotoCollection?
+    var onCommentCount: (Photo, Int) -> Void
+
+    @State private var commentsPhoto: Photo?
 
     @Environment(\.dismiss) private var dismiss
     @State private var currentID: UUID?
@@ -39,8 +47,13 @@ struct FullFrameViewer: View {
     init(photos: [Photo], start: Photo, coverID: UUID? = nil,
          onEdit: ((Photo) -> Void)? = nil, onSetCover: ((Photo) -> Void)? = nil, onRemove: ((Photo) -> Void)? = nil,
          shareLink: ((Photo) -> URL)? = nil, onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil,
-         captionFont: BatchFont? = nil) {
+         captionFont: BatchFont? = nil, reactions: [UUID: PhotoReactions]? = nil, onLike: ((Photo) -> Void)? = nil,
+         commentsBatch: PhotoCollection? = nil, onCommentCount: @escaping (Photo, Int) -> Void = { _, _ in }) {
         self.captionFont = captionFont
+        self.reactions = reactions
+        self.onLike = onLike
+        self.commentsBatch = commentsBatch
+        self.onCommentCount = onCommentCount
         self.photos = photos.isEmpty ? [start] : photos
         self.coverID = coverID
         self.onEdit = onEdit
@@ -73,6 +86,12 @@ struct FullFrameViewer: View {
         .statusBarHidden(chromeHidden || drag != .zero)
         .presentationBackground(.clear)
         .sensoryFeedback(.selection, trigger: currentID)
+        .sheet(item: $commentsPhoto) { photo in
+            if let commentsBatch {
+                PhotoCommentsSheet(photo: photo, collection: commentsBatch) { onCommentCount(photo, $0) }
+                    .presentationDetents([.medium, .large])
+            }
+        }
     }
 
     // MARK: Pages
@@ -176,6 +195,19 @@ struct FullFrameViewer: View {
 
     private func actionBar(_ photo: Photo) -> some View {
         HStack(spacing: 0) {
+            if let onLike, let mine = reactions?[photo.id] {
+                actionButton(mine.likeCount > 0 ? "\(mine.likeCount)" : "Like",
+                             systemImage: mine.likedByMe ? "heart.fill" : "heart",
+                             tint: mine.likedByMe ? .strewnAccent : .white) { onLike(photo) }
+                    .sensoryFeedback(.impact(weight: .light), trigger: mine.likedByMe)
+                    .accessibilityLabel(mine.likedByMe ? "Unlike, \(mine.likeCount.counted("like"))" : "Like, \(mine.likeCount.counted("like"))")
+            }
+            if commentsBatch != nil, let mine = reactions?[photo.id] {
+                actionButton(mine.commentCount > 0 ? "\(mine.commentCount)" : "Comment", systemImage: "bubble.left") {
+                    commentsPhoto = photo
+                }
+                .accessibilityLabel("Comments, \(mine.commentCount)")
+            }
             if let onEdit {
                 actionButton("Edit", systemImage: "slider.horizontal.3") { onEdit(photo) }
             }

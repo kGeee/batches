@@ -49,73 +49,50 @@ struct ReportSheet: View {
     @State private var sent = false
     @State private var problem: String?
 
+    @FocusState private var writing: Bool
+
     var body: some View {
-        NavigationStack {
-            Form {
-                if sent {
-                    Section {
-                        VStack(spacing: 10) {
-                            Image(systemName: "checkmark.circle").font(.system(size: 40)).foregroundStyle(Color.strewnAccent)
-                            Text("Thanks for telling us").font(.headline)
-                            Text("We review every report within a day and remove anything that breaks the rules.\(alsoBlock ? " You won't see each other's batches any more." : "")")
-                                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 12)
-                    }
-                } else {
-                    Section {
-                        ForEach(Report.Reason.allCases) { option in
-                            Button {
-                                reason = option
-                            } label: {
-                                HStack {
-                                    Text(option.label)
-                                    Spacer()
-                                    if reason == option { Image(systemName: "checkmark").foregroundStyle(Color.strewnAccent) }
-                                }
-                            }
-                            .tint(.primary)
-                        }
-                    } header: {
-                        Text("What's wrong with \(subject)?")
-                    }
-                    Section("Anything else (optional)") {
-                        TextField("Details", text: $details, axis: .vertical).lineLimit(3...6)
-                    }
-                    if let owner, owner.id != model.me?.id, !model.isBlocked(owner) {
-                        Section {
-                            Toggle("Also block @\(owner.handle)", isOn: $alsoBlock)
-                        } footer: {
-                            Text("Neither of you will see the other's batches, and you'll stop following each other.")
-                        }
-                    }
-                    if let problem {
-                        Section { Text(problem).foregroundStyle(.red).font(.footnote) }
+        PaperSheet(title: "Report", cancelTitle: sent ? nil : "Cancel", onCancel: { dismiss() },
+                   confirmTitle: sent ? "Done" : "Send", confirmEnabled: sent || reason != nil, confirmBusy: sending,
+                   onConfirm: sent ? finish : send) {
+            if sent {
+                VStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle").font(.system(size: 40)).foregroundStyle(Color.strewnAccent)
+                    Text("Thanks for telling us").titleStyle(.title3)
+                    Text("We review every report within a day and remove anything that breaks the rules.\(alsoBlock ? " You won't see each other's batches any more." : "")")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(24)
+                .background(Color.card, in: RoundedRectangle(cornerRadius: 14))
+            } else {
+                PaperSection(title: "What's wrong with \(subject)?") {
+                    ForEach(Array(Report.Reason.allCases.enumerated()), id: \.element) { index, option in
+                        if index > 0 { PaperDivider() }
+                        PaperChoiceRow(title: option.label, selected: reason == option) { reason = option }
                     }
                 }
-            }
-            .scrollContentBackground(.hidden)
-            .background(DeskMatBackground())
-            .navigationTitle("Report")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if sent {
-                    // The block waits for Done: it can remove the very batch this sheet sits on.
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            if alsoBlock, let owner { Task { await model.block(owner) } }
-                            dismiss()
-                        }
-                    }
-                } else {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        if sending { ProgressView() } else { Button("Send", action: send).disabled(reason == nil) }
+                VStack(alignment: .leading, spacing: 8) {
+                    PaperLabel("Anything else (optional)").padding(.horizontal, 4)
+                    TextField("Details", text: $details, axis: .vertical)
+                        .lineLimit(3...6)
+                        .focused($writing)
+                        .paperField(focused: writing)
+                }
+                if let owner, owner.id != model.me?.id, !model.isBlocked(owner) {
+                    PaperSection(footer: "Neither of you will see the other's batches, and you'll stop following each other.") {
+                        PaperRow { Toggle("Also block @\(owner.handle)", isOn: $alsoBlock).toggleStyle(.paper) }
                     }
                 }
+                if let problem { Text(problem).foregroundStyle(.red).font(.footnote) }
             }
         }
-        .tint(.strewnAccent)
+    }
+
+    /// The block waits for Done: it can remove the very batch this sheet sits on.
+    private func finish() {
+        if alsoBlock, let owner { Task { await model.block(owner) } }
+        dismiss()
     }
 
     private func send() {
@@ -144,28 +121,29 @@ struct BlockedPeopleView: View {
     @State private var unblocking: User?
 
     var body: some View {
-        List {
-            if model.blocked.isEmpty {
-                Text("You haven't blocked anyone. To block someone, open their desk and tap ⋯.")
-                    .font(.callout).foregroundStyle(.secondary).listRowBackground(Color.clear)
-            }
-            ForEach(model.blocked) { user in
-                HStack(spacing: 12) {
-                    AvatarView(user: user, size: 36)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(user.displayName)
-                        Text("@\(user.handle)").metaStyle()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if model.blocked.isEmpty {
+                    Text("You haven't blocked anyone. To block someone, open their desk and tap ⋯.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                } else {
+                    PaperSection(footer: "People you block can't see your batches, and you don't see theirs. They aren't told.") {
+                        ForEach(Array(model.blocked.enumerated()), id: \.element.id) { index, user in
+                            if index > 0 { PaperDivider(inset: 62) }
+                            PaperRow {
+                                PersonRow(user: user) {
+                                    Button("Unblock") { unblocking = user }.buttonStyle(.paper(.secondary, compact: true))
+                                }
+                            }
+                        }
                     }
-                    Spacer()
-                    Button("Unblock") { unblocking = user }.buttonStyle(.bordered).controlSize(.small)
                 }
-                .listRowBackground(Color.card)
             }
+            .padding(18)
         }
-        .scrollContentBackground(.hidden)
         .background(DeskMatBackground())
-        .navigationTitle("Blocked")
-        .navigationBarTitleDisplayMode(.inline)
+        .paperNavigationTitle("Blocked")
         .confirmationDialog("Unblock @\(unblocking?.handle ?? "")?", isPresented: Binding(get: { unblocking != nil }, set: { if !$0 { unblocking = nil } }),
                             titleVisibility: .visible, presenting: unblocking) { user in
             Button("Unblock") { Task { await model.unblock(user) } }
@@ -185,43 +163,49 @@ struct DeleteAccountView: View {
     private var handle: String { model.me?.handle ?? "" }
     private var confirmed: Bool { typed.trimmingCharacters(in: .whitespaces).lowercased() == handle && !handle.isEmpty }
 
+    @FocusState private var typing: Bool
+
     var body: some View {
-        Form {
-            Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("This deletes, for good:").font(.headline)
+                    Text("This deletes, for good:").titleStyle(.title3)
                     bullet("Your profile, @\(handle)")
                     bullet("Every batch you made, for you and everyone you shared it with")
-                    bullet("Photos you added to friends' batches")
+                    bullet("Photos you added to friends' batches, and your likes and comments")
                     bullet("Who you follow, who follows you, and your shares")
                     Text("The photos on this phone stay in your Photos library.")
                         .font(.subheadline).foregroundStyle(.secondary).padding(.top, 4)
                 }
-                .padding(.vertical, 6)
-            }
-            Section {
-                TextField(handle, text: $typed)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-            } header: {
-                Text("Type your handle to confirm")
-            }
-            Section {
-                Button(role: .destructive, action: delete) {
-                    HStack {
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.card, in: RoundedRectangle(cornerRadius: 14))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    PaperLabel("Type your handle to confirm").padding(.horizontal, 4)
+                    TextField(handle, text: $typed)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .focused($typing)
+                        .submitLabel(.done)
+                        .paperField(focused: typing)
+                }
+
+                Button(action: delete) {
+                    HStack(spacing: 8) {
+                        if deleting { ProgressView().tint(.white) }
                         Text("Delete my account")
-                        Spacer()
-                        if deleting { ProgressView() }
                     }
                 }
+                .buttonStyle(.paper(.destructive))
                 .disabled(!confirmed || deleting)
-            } footer: {
-                if let problem { Text(problem).foregroundStyle(.red) }
+
+                if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
             }
+            .padding(18)
         }
-        .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(DeskMatBackground())
-        .navigationTitle("Delete account")
-        .navigationBarTitleDisplayMode(.inline)
+        .paperNavigationTitle("Delete account")
     }
 
     private func bullet(_ text: String) -> some View {

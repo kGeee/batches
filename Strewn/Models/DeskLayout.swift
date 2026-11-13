@@ -31,6 +31,8 @@ struct DeskLayout: Hashable, Codable {
     var groups: [DeskGroup] = []
     /// Tile centers on the freehand desk, in points.
     var positions: [String: CGPoint] = [:]
+    /// Piles lie at loose angles instead of squared up. Off unless you turn it on.
+    var tiltedPiles = false
 
     init() {}
 
@@ -41,6 +43,7 @@ struct DeskLayout: Hashable, Codable {
         order = (try? c.decode([String].self, forKey: .order)) ?? []
         groups = (try? c.decode([DeskGroup].self, forKey: .groups)) ?? []
         positions = (try? c.decode([String: CGPoint].self, forKey: .positions)) ?? [:]
+        tiltedPiles = (try? c.decode(Bool.self, forKey: .tiltedPiles)) ?? false
     }
 
     /// What sits on the desk, in order: batches on their own, and groups of them.

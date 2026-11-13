@@ -59,8 +59,7 @@ struct ProfileView: View {
                 .zIndex(1)
             }
         }
-        .navigationTitle("@\(shown.handle)")
-        .navigationBarTitleDisplayMode(.inline)
+        .paperNavigationTitle("@\(shown.handle)")
         .toolbar(openID == nil ? .automatic : .hidden, for: .navigationBar, .tabBar)
         .onChange(of: piles) { _, piles in
             if let id = openID, !piles.contains(where: { $0.id == id }) { openID = nil }

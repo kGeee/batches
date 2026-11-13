@@ -29,6 +29,12 @@ struct PhotoCollection: Identifiable, Hashable, Codable {
     var font: BatchFont? = nil
     /// The owner's freehand arrangement; nil until they make one. Everyone viewing sees it.
     var board: BatchBoard? = nil
+    /// A short note from the owner under the title, up to 280 characters.
+    var description: String? = nil
+    /// The owner's background; nil means the frame's wall, as older builds set it.
+    var background: BatchBackground? = nil
+
+    static let descriptionLimit = 280
 
     enum Visibility: String, Codable, CaseIterable, Identifiable {
         case `private`, people, followers, `public`

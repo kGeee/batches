@@ -5,6 +5,8 @@ struct FramePickerSheet: View {
     @Binding var frame: FrameStyle
     /// Whether the batch opens as a freehand board instead of one of the frame's layouts.
     @Binding var boardOn: Bool
+    /// What the batch sits on: four presets or the owner's own colour.
+    @Binding var background: BatchBackground
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -22,16 +24,24 @@ struct FramePickerSheet: View {
             section("Border  \(Int(frame.borderWidth)) pt") {
                 Slider(value: $frame.borderWidth, in: 2...36, step: 1).disabled(frame.kind == .none)
             }
-            section("Wall") {
+            section("Background") {
                 if frame.kind == .filmStrip {
                     // GalleryView always shows film dark, so there's nothing to pick.
                     Text("Film is always shown on a dark wall.").font(.subheadline).foregroundStyle(.secondary)
                         .frame(height: 36, alignment: .leading)
                 } else {
-                    HStack(spacing: 8) {
-                        chip("Light", selected: frame.wall == .light) { frame.wall = .light }
-                        chip("Dark", selected: frame.wall == .dark) { frame.wall = .dark }
-                        chip("Desk", selected: frame.wall == .desk) { frame.wall = .desk }
+                    HStack(spacing: 10) {
+                        ForEach(BatchBackground.presets, id: \.self) { preset in
+                            swatch(preset, selected: background == preset) { background = preset }
+                        }
+                        ColorPicker(selection: Binding(get: { background.color ?? .white },
+                                                       set: { background = BatchBackground($0) }),
+                                    supportsOpacity: false) {
+                            Text("Custom").font(.subheadline.weight(.semibold))
+                                .foregroundStyle(background.isCustom ? Color.strewnAccent : .secondary)
+                        }
+                        .fixedSize()
+                        .accessibilityLabel("Custom background colour")
                     }
                 }
             }
@@ -49,24 +59,41 @@ struct FramePickerSheet: View {
             }
         }
         .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(DeskMatBackground())
         .overlay(alignment: .topTrailing) {
-            Button("Done") { dismiss() }.font(.subheadline.weight(.semibold)).padding(.top, 16).padding(.trailing, 20)
+            Button("Done") { dismiss() }.font(.body.weight(.semibold)).padding(.top, 14).padding(.trailing, 20)
         }
         .tint(.strewnAccent)
     }
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary).kerning(0.8)
+            PaperLabel(title)
             content()
         }
     }
 
-    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    /// A small square of the background itself, named underneath.
+    private func swatch(_ option: BatchBackground, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.85).padding(.horizontal, 7).padding(.vertical, 8)
+            VStack(spacing: 4) {
+                option.view
+                    .frame(width: 44, height: 32)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7)
+                        .strokeBorder(selected ? Color.strewnAccent : Color.secondary.opacity(0.35), lineWidth: selected ? 2.5 : 1))
+                Text(option.title).font(.caption2.weight(selected ? .bold : .medium))
+                    .foregroundStyle(selected ? Color.strewnAccent : .secondary)
+            }
         }
-        .buttonStyle(.bordered)
-        .tint(selected ? .strewnAccent : .secondary)
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(option.title) background")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
+
+    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        PaperChip(title: title, selected: selected, action: action)
+    }
+
 }

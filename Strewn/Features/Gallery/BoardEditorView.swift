@@ -38,9 +38,8 @@ struct BoardEditorView: View {
                 }
                 .safeAreaInset(edge: .bottom) { controls(width: width) }
             }
-            .background { wall.ignoresSafeArea() }
-            .navigationTitle("Arrange board")
-            .navigationBarTitleDisplayMode(.inline)
+            .background { collection.backdrop.view.ignoresSafeArea() }
+            .paperNavigationTitle("Arrange board")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -55,7 +54,7 @@ struct BoardEditorView: View {
             .sensoryFeedback(.selection, trigger: selected)
         }
         .tint(.strewnAccent)
-        .environment(\.colorScheme, wallScheme ?? systemScheme)
+        .environment(\.colorScheme, collection.backdrop.scheme ?? systemScheme)
     }
 
     private func canvas(width: CGFloat, minHeight: CGFloat) -> some View {
@@ -202,24 +201,6 @@ struct BoardEditorView: View {
             $0.x += dx
             $0.y += dy
             $0.width += dWidth
-        }
-    }
-
-    // MARK: The wall, as in the gallery
-
-    @ViewBuilder private var wall: some View {
-        switch frame.wall {
-        case .light: Color(white: 0.953)
-        case .dark: Color(white: 0.07)
-        case .desk: DeskMatBackground()
-        }
-    }
-
-    private var wallScheme: ColorScheme? {
-        switch frame.wall {
-        case .light: .light
-        case .dark: .dark
-        case .desk: nil
         }
     }
 }

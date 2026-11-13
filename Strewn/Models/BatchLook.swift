@@ -119,17 +119,16 @@ struct BatchBoard: Hashable, Codable {
         return result
     }
 
-    /// A loose two-column layout, used when a board starts and for "Tidy up". A slight tilt per
-    /// photo, the same every time, so it reads as prints on a board rather than a grid.
+    /// A loose two-column layout, used when a board starts and for "Tidy up". Prints start
+    /// straight; the owner can tilt any of them in the editor.
     static func tidy(_ photos: [Photo], insets: EdgeInsets, width: CGFloat, from top: CGFloat = margin, z: Int = 0) -> [UUID: Placement] {
         let printWidth: CGFloat = 0.46
         var bottoms: [CGFloat] = [top, top]
         var result: [UUID: Placement] = [:]
         for (index, photo) in photos.enumerated() {
-            var rng = SeededRandom(seed: photo.id)
             let column = bottoms[0] <= bottoms[1] ? 0 : 1
             var place = Placement(x: column == 0 ? 0.26 : 0.74, y: 0, width: printWidth,
-                                  rotation: rng.next(in: -2.5...2.5), z: z + index)
+                                  rotation: 0, z: z + index)
             let box = bounds(of: photo, at: place, insets: insets, boardWidth: width)
             place.y = bottoms[column] + box.height / 2
             bottoms[column] += box.height + margin
@@ -192,4 +191,159 @@ struct Lenient<Value: Decodable>: Decodable {
     let value: Value?
     init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
     init(_ value: Value?) { self.value = value }
+}
+
+/// What a batch's photos sit on. Stored in its own column (collections.background) because older
+/// builds can't decode a FrameStyle.wall they don't know; `legacyWall` is what those builds get.
+enum BatchBackground: Hashable, Codable {
+    case light, dark, desk, kraft
+    /// The owner's own colour, as 0...1 RGB.
+    case custom(red: Double, green: Double, blue: Double)
+
+    static let presets: [BatchBackground] = [.light, .dark, .desk, .kraft]
+
+    init?(raw: String) {
+        switch raw {
+        case "light": self = .light
+        case "dark": self = .dark
+        case "desk": self = .desk
+        case "kraft": self = .kraft
+        default:
+            guard raw.wholeMatch(of: #/#[0-9a-f]{6}/#) != nil, let value = UInt32(raw.dropFirst(), radix: 16) else { return nil }
+            self = .custom(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255,
+                           blue: Double(value & 0xFF) / 255)
+        }
+    }
+
+    init(_ wall: FrameStyle.Wall) {
+        switch wall {
+        case .light: self = .light
+        case .dark: self = .dark
+        case .desk: self = .desk
+        }
+    }
+
+    /// A colour from the picker, rounded to what's stored.
+    init(_ color: Color) {
+        let resolved = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let clamp = { (v: CGFloat) in (min(1, max(0, Double(v))) * 255).rounded() / 255 }
+        self = .custom(red: clamp(r), green: clamp(g), blue: clamp(b))
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let value = BatchBackground(raw: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Unknown background \(raw)"))
+        }
+        self = value
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(raw)
+    }
+
+    var raw: String {
+        switch self {
+        case .light: "light"
+        case .dark: "dark"
+        case .desk: "desk"
+        case .kraft: "kraft"
+        case .custom(let r, let g, let b):
+            String(format: "#%02x%02x%02x", Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded()))
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .light: "Light"
+        case .dark: "Dark"
+        case .desk: "Linen"
+        case .kraft: "Kraft"
+        case .custom: "Custom"
+        }
+    }
+
+    var isCustom: Bool { if case .custom = self { true } else { false } }
+
+    /// Amber controls disappear into kraft and into colours near it, so on those the controls are
+    /// plain black or white instead.
+    var neutralControls: Bool {
+        switch self {
+        case .kraft, .custom: true
+        default: false
+        }
+    }
+
+    /// Kraft paper: a warm, light brown card.
+    static let kraftColor = Color(red: 0.80, green: 0.69, blue: 0.53)
+
+    var color: Color? {
+        switch self {
+        case .light: Color(white: 0.953)
+        case .dark: Color(white: 0.07)
+        case .desk: nil
+        case .kraft: Self.kraftColor
+        case .custom(let r, let g, let b): Color(red: r, green: g, blue: b)
+        }
+    }
+
+    /// Text and controls follow the background, not the system: dark on light backgrounds, light on
+    /// dark ones. Linen follows the system, as the desk does.
+    var scheme: ColorScheme? {
+        switch self {
+        case .light, .kraft: .light
+        case .dark: .dark
+        case .desk: nil
+        case .custom(let r, let g, let b):
+            // Relative luminance, so mid greys and saturated colours pick sensibly.
+            0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? .light : .dark
+        }
+    }
+
+    /// The nearest wall builds 7 and 8 know, kept in the frame for them.
+    var legacyWall: FrameStyle.Wall {
+        switch self {
+        case .light, .kraft: .light
+        case .dark: .dark
+        case .desk: .desk
+        case .custom: scheme == .dark ? .dark : .light
+        }
+    }
+
+    @ViewBuilder var view: some View {
+        if let color { color } else { DeskMatBackground() }
+    }
+}
+
+extension PhotoCollection {
+    /// What the batch is shown on. A roll of film is always on a dark wall, like a light table
+    /// with the lights down.
+    var backdrop: BatchBackground {
+        if frame.kind == .filmStrip { return .dark }
+        return background ?? BatchBackground(frame.wall)
+    }
+}
+
+/// Likes and comments on one photo, as the signed-in person sees them: people on the other side of
+/// a block aren't counted.
+struct PhotoReactions: Hashable {
+    var likeCount = 0
+    var likedByMe = false
+    var commentCount = 0
+}
+
+/// A comment on a photo. Comments can't be edited; their author and the batch's owner can remove
+/// them, and anyone who sees them can report them.
+struct PhotoComment: Identifiable, Hashable {
+    let id: UUID
+    let photoID: UUID
+    let author: User?
+    let authorID: UUID
+    let body: String
+    let createdAt: Date
+
+    static let maxLength = 500
 }

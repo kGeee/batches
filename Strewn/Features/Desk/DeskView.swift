@@ -48,7 +48,7 @@ struct DeskView: View {
                         FollowListView(route: route)
                             .navigationDestination(for: User.self) { ProfileView(user: $0) }
                             .navigationDestination(for: FollowListRoute.self) { FollowListView(route: $0) }
-                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { followList = nil } } }
+                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { followList = nil }.fontWeight(.semibold) } }
                     }
                     .tint(.strewnAccent)
                 }
@@ -56,10 +56,12 @@ struct DeskView: View {
                 .sensoryFeedback(.selection, trigger: dropTargetID)
                 // The gallery gets the whole screen, as it does from Friends.
                 .toolbar(openID == nil && openGroupID == nil ? .automatic : .hidden, for: .tabBar)
-                .alert("Name this group", isPresented: Binding(get: { renamingGroup != nil }, set: { if !$0 { renamingGroup = nil } })) {
-                    TextField("Name", text: $groupNameDraft)
-                    Button("Save") { saveGroupName() }
-                    Button("Cancel", role: .cancel) {}
+                .sheet(item: $renamingGroup) { group in
+                    PaperTextPrompt(title: "Name this group", placeholder: "Name", initial: group.title) { title in
+                        groupNameDraft = title
+                        saveGroupName(id: group.id)
+                    }
+                    .presentationDetents([.height(200)])
                 }
 
             if let openGroup {
@@ -85,6 +87,7 @@ struct DeskView: View {
                 .zIndex(2)
             }
         }
+        .environment(\.tiltedPiles, layout.tiltedPiles)
         // A group that lost its last batches closes with it.
         .onChange(of: model.desk.groups) { _, groups in
             if let id = openGroupID, !groups.contains(where: { $0.id == id }) { openGroupID = nil }
@@ -150,6 +153,19 @@ struct DeskView: View {
                 .accessibilityAddTraits(layout.mode == mode ? .isSelected : [])
             }
             Spacer(minLength: 8)
+            if arranging {
+                Button {
+                    withAnimation(.snappy) { model.changeDesk { $0.tiltedPiles.toggle() } }
+                } label: {
+                    Image(systemName: "rotate.right")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 40, height: 34)
+                        .foregroundStyle(layout.tiltedPiles ? Color.onAccent : Color.primary)
+                        .background(layout.tiltedPiles ? Color.strewnAccent : Color.card, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .accessibilityLabel("Tilted piles")
+                .accessibilityAddTraits(layout.tiltedPiles ? .isSelected : [])
+            }
             Button {
                 withAnimation(.snappy) { arranging.toggle() }
             } label: {
@@ -165,6 +181,7 @@ struct DeskView: View {
             if arranging {
                 Text(layout.mode == .freehand ? "Drag batches anywhere. Drop one on another to group them."
                                               : "Drag to reorder. Long-press a batch to group it.")
+                    .lineLimit(1).minimumScaleFactor(0.8)
                     .font(.caption).foregroundStyle(.secondary)
                     .offset(y: 20)
             }
@@ -244,7 +261,7 @@ struct DeskView: View {
                         DeskPileView(collection: collection, namespace: pileSpace)
                     }
                 case .group(let group, let piles):
-                    DeskGroupPile(group: group, piles: piles)
+                    DeskGroupPile(group: group, piles: piles, tilted: layout.tiltedPiles)
                 }
             }
             .overlay {
@@ -386,9 +403,9 @@ struct DeskView: View {
         renamingGroup = group
     }
 
-    private func saveGroupName() {
+    private func saveGroupName(id: UUID) {
         let title = groupNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let id = renamingGroup?.id, !title.isEmpty else { return }
+        guard !title.isEmpty else { return }
         model.changeDesk { desk in
             if let i = desk.groups.firstIndex(where: { $0.id == id }) { desk.groups[i].title = title }
         }
@@ -411,6 +428,7 @@ struct DeskView: View {
 struct DeskGroupPile: View {
     let group: DeskGroup
     let piles: [PhotoCollection]
+    var tilted = false
 
     private static let fan: [(angle: Double, x: CGFloat, y: CGFloat)] = [(-9, -0.12, -0.08), (7, 0.12, -0.06), (-4, -0.08, 0.12), (5, 0.1, 0.1)]
 
@@ -428,7 +446,7 @@ struct DeskGroupPile: View {
                     let middleY = used.map(\.y).reduce(0, +) / CGFloat(used.count)
                     PrintView(photo: photo, paper: side * 0.012)
                         .frame(width: side * (photo.orientation == .portrait ? 0.34 : 0.48))
-                        .rotationEffect(.degrees(spot.angle))
+                        .rotationEffect(.degrees(tilted ? spot.angle : 0))
                         .position(x: side / 2 + (spot.x - middleX) * side, y: side / 2 + (spot.y - middleY) * side)
                 }
                 Text("\(piles.count)")
@@ -642,7 +660,6 @@ struct AccountSheet: View {
                                         PrintView(photo: photo, paper: 3)
                                             .aspectRatio(1, contentMode: .fit)
                                             .clipped()
-                                            .rotationEffect(.degrees([-3, 2, -1.5, 3][index]))
                                     }
                                     ForEach(recentCovers.count..<4, id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
                                 }
@@ -705,7 +722,7 @@ struct AccountSheet: View {
             .background(DeskMatBackground())
             .navigationDestination(for: User.self) { ProfileView(user: $0) }
             .navigationDestination(for: FollowListRoute.self) { FollowListView(route: $0) }
-            .navigationTitle("Account")
+            .paperNavigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }

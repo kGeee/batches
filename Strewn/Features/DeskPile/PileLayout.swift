@@ -11,14 +11,27 @@ struct PilePlacement {
     var widthFraction: CGFloat
 }
 
+extension EnvironmentValues {
+    /// Whether piles lie at loose angles. Off by default, so piles are squared up; your own desk can
+    /// turn it on in Arrange.
+    @Entry var tiltedPiles = false
+}
+
 enum PileLayout {
-    static func placement(for photo: Photo, isTop: Bool) -> PilePlacement {
+    static func placement(for photo: Photo, isTop: Bool, tilted: Bool = false) -> PilePlacement {
         var rng = SeededRandom(seed: photo.id)
         let width: CGFloat = switch photo.orientation {
         case .portrait: 0.44
         case .square: 0.52
         case .landscape: 0.62
         case .panorama: 0.80
+        }
+        guard tilted else {
+            // Squared up: the prints underneath peek out by a little, all at the same angle.
+            if isTop { return PilePlacement(angle: .zero, offset: .zero, widthFraction: width) }
+            return PilePlacement(angle: .zero,
+                                 offset: CGSize(width: rng.next(in: -0.05...0.05), height: rng.next(in: -0.06...0.06)),
+                                 widthFraction: width)
         }
         if isTop {
             return PilePlacement(angle: .degrees(rng.next(in: -4...4)),

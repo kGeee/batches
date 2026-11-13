@@ -10,33 +10,30 @@ struct BatchFontSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            List(BatchFont.allCases) { font in
-                Button {
-                    onPick(font)
-                } label: {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(title).font(font.font(.title2, weight: .semibold)).lineLimit(1)
-                            Text(font.title).metaStyle()
+        PaperSheet(title: "Font", cancelTitle: nil, confirmTitle: "Done", onConfirm: { dismiss() }) {
+            PaperSection(footer: "Titles and captions use this font for everyone who opens the batch.") {
+                ForEach(Array(BatchFont.allCases.enumerated()), id: \.element) { index, font in
+                    if index > 0 { PaperDivider() }
+                    let selected = font == (current ?? .classic)
+                    Button { onPick(font) } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(title).font(font.font(.title3, weight: .semibold)).lineLimit(1)
+                                Text(font.title).metaStyle()
+                            }
+                            Spacer()
+                            if selected {
+                                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Color.strewnAccent)
+                            }
                         }
-                        Spacer()
-                        if font == (current ?? .classic) {
-                            Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Color.strewnAccent)
-                                .accessibilityLabel("Selected")
-                        }
+                        .padding(.horizontal, 14).padding(.vertical, 11)
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(font.title)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(Color.card)
             }
-            .scrollContentBackground(.hidden)
-            .background(DeskMatBackground())
-            .navigationTitle("Font")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .tint(.strewnAccent)
     }
 }
