@@ -131,7 +131,7 @@ struct GalleryView: View {
                             onEdit: canEdit(photo) ? { edit($0) } : nil,
                             onSetCover: isOwner ? { model.setCover($0, in: collection.id) } : nil,
                             onRemove: canRemove(photo) ? { remove($0) } : nil,
-                            shareLink: { AppModel.link(to: collection, photo: $0) },
+                            shareLink: { AppModel.link(to: collection, photo: $0) }, shareTitle: collection.title,
                             onShareBatch: isOwner && !collection.isShared ? { openShareSettings() } : nil,
                             onReport: canReport(photo) ? { report($0) } : nil,
                             captionFont: collection.font,
@@ -263,8 +263,7 @@ struct GalleryView: View {
             // Nobody else can open this batch yet, so a link would lead nowhere.
             Button("Share", systemImage: "square.and.arrow.up") { showShare = true }
         } else {
-            ShareLink(item: AppModel.link(to: collection, photo: photo), subject: Text(collection.title),
-                      message: Text("A photo from \(collection.title), on Batches")) {
+            LinkShareButton(url: AppModel.link(to: collection, photo: photo), title: collection.title, photo: photo) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         }

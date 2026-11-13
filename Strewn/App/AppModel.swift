@@ -316,8 +316,10 @@ final class AppModel {
         if failed > 0 { errorMessage = "\(failed) photo\(failed == 1 ? "" : "s") couldn't be shared. Try again from Share." }
     }
 
-    /// Opens strewn://pile/<id>[?photo=<id>] and strewn://u/<handle> links, and the sign-in link from the email.
+    /// Opens batch links (https://batches.space/b/<id>[?photo=<id>], and the older
+    /// strewn://pile/<id> form), strewn://u/<handle> links, and the sign-in link from the email.
     func open(_ url: URL) async {
+        if let web = Self.appLink(fromWeb: url) { return await open(web) }
         guard url.scheme == "strewn" else { return }
         if url.host() == "auth-callback" {
             guard auth == .signedOut else { return }
@@ -345,13 +347,33 @@ final class AppModel {
         }
     }
 
+    /// A web link, so Messages and other apps show it as a link with a preview. With the app
+    /// installed, iOS opens it here (applinks:batches.space); without, it opens a page on
+    /// batches.space that never shows the batch itself.
     static func link(to pile: PhotoCollection) -> URL {
-        URL(string: "strewn://pile/\(pile.id.uuidString.lowercased())")!
+        URL(string: "https://\(webHost)/b/\(pile.id.uuidString.lowercased())")!
     }
 
     /// Opens the batch in the app and then this photo in it.
     static func link(to pile: PhotoCollection, photo: Photo) -> URL {
-        URL(string: "strewn://pile/\(pile.id.uuidString.lowercased())?photo=\(photo.id.uuidString.lowercased())")!
+        URL(string: "https://\(webHost)/b/\(pile.id.uuidString.lowercased())?photo=\(photo.id.uuidString.lowercased())")!
+    }
+
+    static let webHost = "batches.space"
+
+    /// https://batches.space/b/<id>[?photo=<id>] as the strewn://pile link the rest of open(_:) reads.
+    static func appLink(fromWeb url: URL) -> URL? {
+        guard url.scheme == "https", let host = url.host(), host == webHost || host == "www.\(webHost)" else { return nil }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard parts.count == 2, parts[0] == "b", let id = UUID(uuidString: parts[1]) else { return nil }
+        var app = URLComponents()
+        app.scheme = "strewn"
+        app.host = "pile"
+        app.path = "/" + id.uuidString.lowercased()
+        let photo = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "photo" }?.value.flatMap(UUID.init(uuidString:))
+        if let photo { app.queryItems = [URLQueryItem(name: "photo", value: photo.uuidString.lowercased())] }
+        return app.url
     }
 
     func setCover(_ photo: Photo, in collectionID: UUID) {

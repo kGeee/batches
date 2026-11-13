@@ -92,8 +92,7 @@ struct SharePileSheet: View {
 
             if let pile, pile.isShared, visibility != .private {
                 PaperSection(footer: "The link opens this batch in the app for anyone who can already see it.") {
-                    ShareLink(item: AppModel.link(to: pile), subject: Text(pile.title),
-                              message: Text("\(pile.title), on Batches")) {
+                    LinkShareButton(url: AppModel.link(to: pile), title: pile.title, photo: pile.cover) {
                         PaperRow {
                             Label("Send a link", systemImage: "link").foregroundStyle(Color.strewnAccent)
                         }

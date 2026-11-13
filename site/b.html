@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A batch on Batches</title>
+<!-- Every /b/... link shows this same page. It never shows a batch's photos or title, because
+     anyone holding a link could read them here; the photo preview in Messages comes from the
+     sender's phone instead. -->
+<meta name="description" content="Someone shared a batch of photos with you on Batches, the iPhone app for sharing photos with the people who were there.">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="A batch on Batches">
+<meta property="og:description" content="Open it in Batches for iPhone.">
+<meta property="og:image" content="https://batches.space/img/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --desk: #ddd4c1; --paper: #faf8f2; --ink: #1d1b17; --muted: #5a5347; --accent: #8a5210; --on-accent: #fffaf1; }
+  @media (prefers-color-scheme: dark) { :root { --desk: #26231e; --paper: #2f2b25; --ink: #f1ebdf; --muted: #b3aa9b; --accent: #e7a452; --on-accent: #241808; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--desk); color: var(--ink); font: 18px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 24px 16px; }
+  main { width: min(440px, 100%); background: var(--paper); border-radius: 18px; padding: 32px 28px; text-align: center; }
+  img { width: 72px; height: 72px; border-radius: 16px; }
+  h1 { font: 700 32px/1.1 "New York", "Iowan Old Style", Georgia, serif; margin: 16px 0 10px; }
+  p { margin: 0 0 22px; color: var(--muted); }
+  a.open { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 26px; border-radius: 24px; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; }
+  a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .small { font-size: 15px; margin: 18px 0 0; }
+  .small a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <img src="/img/icon.png" alt="" width="72" height="72">
+  <h1>A batch on Batches</h1>
+  <p>Someone shared a batch of photos with you. Open it in the Batches app on your iPhone.</p>
+  <a class="open" id="open" href="/">Open in Batches</a>
+  <p class="small">Don't have it yet? Batches is coming soon to the App Store. <a href="/">Learn more</a></p>
+</main>
+<script>
+  // Only well-formed ids go into the app link.
+  var uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var id = location.pathname.split("/")[2] || "";
+  var photo = new URLSearchParams(location.search).get("photo") || "";
+  if (uuid.test(id)) {
+    document.getElementById("open").href = "strewn://pile/" + id.toLowerCase() + (uuid.test(photo) ? "?photo=" + photo.toLowerCase() : "");
+  }
+</script>
+</body>
+</html>

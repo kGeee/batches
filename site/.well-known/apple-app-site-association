@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["7CK43PG7GZ.com.kevingeorge.strewn"],
+        "components": [
+          { "/": "/b/*", "comment": "A batch, or a photo in one with ?photo=" }
+        ]
+      }
+    ]
+  }
+}

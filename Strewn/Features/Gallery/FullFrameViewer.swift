@@ -16,6 +16,8 @@ struct FullFrameViewer: View {
     var onRemove: ((Photo) -> Void)?
     /// A link that opens this photo in its batch in the app. Share sends this, never the file.
     var shareLink: ((Photo) -> URL)?
+    /// The batch's title, shown in the link's preview.
+    var shareTitle = "Batches"
     /// For your own batch nobody else can open yet: Share leads to who can see it instead.
     var onShareBatch: (() -> Void)?
     /// Someone else's photo: report it.
@@ -46,7 +48,7 @@ struct FullFrameViewer: View {
 
     init(photos: [Photo], start: Photo, coverID: UUID? = nil,
          onEdit: ((Photo) -> Void)? = nil, onSetCover: ((Photo) -> Void)? = nil, onRemove: ((Photo) -> Void)? = nil,
-         shareLink: ((Photo) -> URL)? = nil, onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil,
+         shareLink: ((Photo) -> URL)? = nil, shareTitle: String = "Batches", onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil,
          captionFont: BatchFont? = nil, reactions: [UUID: PhotoReactions]? = nil, onLike: ((Photo) -> Void)? = nil,
          commentsBatch: PhotoCollection? = nil, onCommentCount: @escaping (Photo, Int) -> Void = { _, _ in }) {
         self.captionFont = captionFont
@@ -60,6 +62,7 @@ struct FullFrameViewer: View {
         self.onSetCover = onSetCover
         self.onRemove = onRemove
         self.shareLink = shareLink
+        self.shareTitle = shareTitle
         self.onShareBatch = onShareBatch
         self.onReport = onReport
         _currentID = State(initialValue: start.id)
@@ -221,7 +224,7 @@ struct FullFrameViewer: View {
             if let onShareBatch {
                 actionButton("Share", systemImage: "square.and.arrow.up", action: onShareBatch)
             } else if let shareLink {
-                ShareLink(item: shareLink(photo)) {
+                LinkShareButton(url: shareLink(photo), title: shareTitle, photo: photo) {
                     actionLabel("Share", systemImage: "square.and.arrow.up", tint: .white)
                 }
                 .frame(maxWidth: .infinity)

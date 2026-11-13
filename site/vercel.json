@@ -13,5 +13,22 @@
       "destination": "https://batches.space/$1",
       "permanent": true
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/b/:id",
+      "destination": "/b"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ]
+    }
   ]
 }
