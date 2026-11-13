@@ -17,11 +17,11 @@
   "rewrites": [
     {
       "source": "/b/:id",
-      "destination": "/app/index.html"
+      "destination": "/app"
     },
     {
       "source": "/app/:path((?!assets/).*)",
-      "destination": "/app/index.html"
+      "destination": "/app"
     }
   ],
   "headers": [
