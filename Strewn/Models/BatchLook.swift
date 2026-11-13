@@ -335,6 +335,20 @@ struct PhotoReactions: Hashable {
     var commentCount = 0
 }
 
+/// Something someone else did to one of your photos: a like or a comment. Shown on the desk and
+/// under Friends › Activity.
+struct ActivityItem: Identifiable, Hashable, Sendable {
+    enum Kind: Hashable, Sendable { case like, comment(String) }
+    let id: String
+    let kind: Kind
+    let actor: User?
+    let actorID: UUID
+    let photoID: UUID
+    let at: Date
+
+    var isLike: Bool { kind == .like }
+}
+
 /// A comment on a photo. Comments can't be edited; their author and the batch's owner can remove
 /// them, and anyone who sees them can report them.
 struct PhotoComment: Identifiable, Hashable {

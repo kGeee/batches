@@ -58,6 +58,26 @@ struct PhotoCollection: Identifiable, Hashable, Codable {
             }
         }
 
+        /// The title, short enough for a chip or a card.
+        var shortTitle: String {
+            switch self {
+            case .private: "Only me"
+            case .people: "Specific people"
+            case .followers: "Followers"
+            case .public: "Anyone"
+            }
+        }
+
+        /// A few words on what choosing it does.
+        var brief: String {
+            switch self {
+            case .private: "Nothing is uploaded"
+            case .people: "Just who you pick"
+            case .followers: "Plus anyone you add"
+            case .public: "Shows on your profile"
+            }
+        }
+
         var symbol: String {
             switch self {
             case .private: "lock"
@@ -69,6 +89,17 @@ struct PhotoCollection: Identifiable, Hashable, Codable {
     }
 
     var isShared: Bool { visibility != .private }
+
+    /// Who can see it, in a word or two, for the owner: "Followers", "2 people", "Only me".
+    var audienceLabel: String {
+        switch visibility {
+        case .people: sharedWith.isEmpty ? visibility.shortTitle : sharedWith.count.counted("person", plural: "people")
+        default: visibility.shortTitle
+        }
+    }
+
+    /// Other people may add photos to it, or already have.
+    var isGroup: Bool { canAdd || !contributorIDs.isEmpty || !contributors.isEmpty }
 
     /// Whether the batch opens as a freehand board. A roll of film always opens as a roll.
     var showsBoard: Bool { board?.isOn == true && frame.kind != .filmStrip }

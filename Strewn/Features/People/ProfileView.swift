@@ -60,7 +60,8 @@ struct ProfileView: View {
             }
         }
         .paperNavigationTitle("@\(shown.handle)")
-        .toolbar(openID == nil ? .automatic : .hidden, for: .navigationBar, .tabBar)
+        .toolbar(openID == nil ? .automatic : .hidden, for: .navigationBar)
+        .coversTabBar(openID != nil, key: "profile-\(user.id)")
         .onChange(of: piles) { _, piles in
             if let id = openID, !piles.contains(where: { $0.id == id }) { openID = nil }
         }

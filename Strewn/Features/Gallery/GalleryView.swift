@@ -43,6 +43,8 @@ struct GalleryView: View {
     @State private var headerPull: CGFloat = 0  // drag on the header, works at any scroll position
     /// The big title at the top has scrolled away, so the header shows it instead.
     @State private var titleScrolledAway = false
+    /// Which photo the scroll is nearest, for the rail down the side.
+    @State private var railIndex = 0
 
     private var frame: FrameStyle { collection.frame }
     private var pullDistance: CGFloat { max(pull, headerPull) }
@@ -72,14 +74,22 @@ struct GalleryView: View {
                                     .padding(.horizontal, 12)
                             }
                         }
-                        .padding(.bottom, 40)
+                        .padding(.bottom, showsDock ? 112 : 40)
                     }
                     .scrollIndicators(.hidden)
-                    .modifier(TitleScrollTracker(scrolledAway: $titleScrolledAway))
+                    .modifier(TitleScrollTracker(scrolledAway: $titleScrolledAway, index: $railIndex, count: collection.photos.count))
+                    .overlay(alignment: .trailing) {
+                        if showsRail { rail.opacity(appeared ? 1 - pullProgress : 0) }
+                    }
                     .pullDownToDismiss(distance: $pull, onDismiss: close)
                     // shrink toward the desk as you pull; render-only, so layout and scrolling are untouched
                     .scaleEffect(1 - 0.22 * pullProgress, anchor: .top)
                     .offset(y: headerPull * 0.9)
+                }
+                if showsDock {
+                    dock
+                        .opacity(appeared ? 1 - pullProgress : 0)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
                 }
             }
         }
@@ -211,7 +221,8 @@ struct GalleryView: View {
                     .contextMenu { photoMenu(photo) }
                 // Two columns are a contact sheet: the prints alone read better.
                 if frame.layout == .single {
-                    PhotoMetaRow(collection: collection, photo: photo, index: index, reactions: reactions?[photo.id])
+                    PhotoMetaRow(collection: collection, photo: photo, index: index, reactions: reactions?[photo.id],
+                                 onLike: { like(photo) }, onComments: { commentsPhoto = photo })
                         .opacity(appeared ? 1 : 0)
                 }
             }
@@ -287,34 +298,27 @@ struct GalleryView: View {
             .opacity(titleScrolledAway ? 1 : 0)
             .animation(.easeOut(duration: 0.2), value: titleScrolledAway)
             Spacer(minLength: 4)
-            // Icon-only, so the title keeps the room.
-            if canAdd {
-                PhotosPicker(selection: $picked, maxSelectionCount: 60, matching: .images,
-                             preferredItemEncoding: .current, photoLibrary: .shared()) {
-                    if importing {
-                        ProgressView().frame(width: 38, height: 38)
-                    } else {
-                        headerIcon("plus")
-                    }
-                }
-                .disabled(importing)
-                .accessibilityLabel("Add photos")
-            }
             if isOwner {
+                // Says who can see the batch, and opens the sheet that changes it.
                 Button { showShare = true } label: {
-                    headerIcon(collection.isShared ? collection.visibility.symbol : "square.and.arrow.up")
+                    HStack(spacing: 6) {
+                        Image(systemName: collection.visibility.symbol).font(.subheadline.weight(.semibold))
+                        // Once the title is up here it needs the room.
+                        if !titleScrolledAway {
+                            Text(collection.audienceLabel).font(.subheadline.weight(.semibold)).lineLimit(1)
+                            Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                        }
+                    }
+                    .fixedSize()
+                    .padding(.horizontal, 13)
+                    .frame(minWidth: 38, minHeight: 38)
+                    .background(.foreground.opacity(0.1), in: Capsule())
+                    .contentShape(Capsule())
                 }
                 .accessibilityLabel("Share, \(collection.visibility.title)")
-                Button { showFrames = true } label: { headerIcon("square.inset.filled") }
-                    .accessibilityLabel("Frames")
                 Menu {
                     Button("Rename", systemImage: "pencil", action: startRename)
                     Button("Description", systemImage: "text.alignleft") { showDescription = true }
-                    Button("Font", systemImage: "textformat") { showFont = true }
-                    if frame.kind != .filmStrip {
-                        Button("Arrange board", systemImage: "hand.draw") { arrangingBoard = true }
-                            .disabled(collection.photos.isEmpty)
-                    }
                     Button("Reorder photos", systemImage: "arrow.up.arrow.down") { showReorder = true }
                         .disabled(collection.photos.count < 2)
                 } label: { headerIcon("ellipsis") }
@@ -387,19 +391,123 @@ struct GalleryView: View {
                 .disabled(onOpenOwner == nil)
                 .padding(.top, 2)
             }
-            if !isOwner && collection.canAdd {
-                Label("Group batch · you can add photos", systemImage: "plus.rectangle.on.rectangle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.strewnAccent)
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Color.strewnAccent.opacity(0.12), in: Capsule())
-                    .padding(.top, 4)
-            }
+            if collection.isGroup { groupRow.padding(.top, 4) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.top, 4)
         .padding(.bottom, 18)
+    }
+
+    /// Who's in a group batch, by face: the people who've added photos, or who may.
+    private var groupRow: some View {
+        let people = groupPeople
+        return HStack(spacing: 8) {
+            if !people.isEmpty {
+                HStack(spacing: -8) {
+                    ForEach(people.prefix(4)) { AvatarView(user: $0, size: 26) }
+                }
+            }
+            Text(groupLine(people)).font(.footnote.weight(.medium)).lineLimit(1)
+            Spacer(minLength: 4)
+            Label("Group", systemImage: "plus.rectangle.on.rectangle")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.strewnAccent)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Color.strewnAccent.opacity(0.12), in: Capsule())
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var groupPeople: [User] {
+        var people = collection.contributors
+        if isOwner {
+            people += collection.sharedWith.filter { person in
+                collection.contributorIDs.contains(person.id) && !people.contains { $0.id == person.id }
+            }
+        }
+        return people
+    }
+
+    private func groupLine(_ people: [User]) -> String {
+        let me = model.me?.id
+        let added = Set(collection.contributors.map(\.id))
+        guard !people.isEmpty else { return collection.canAdd ? "You can add photos" : "Friends can add photos" }
+        let names = ListFormatter.localizedString(byJoining: people.prefix(3).map { $0.id == me ? "You" : $0.displayName }
+                                                  + (people.count > 3 ? ["\(people.count - 3) more"] : []))
+        // Nobody has added anything yet: say what they can do instead.
+        return people.contains { added.contains($0.id) } ? "With \(names)" : "\(names) can add photos"
+    }
+
+    private var showsDock: Bool { canAdd }
+
+    private var showsRail: Bool {
+        frame.kind != .filmStrip && !collection.showsBoard && frame.layout == .single && collection.photos.count > 1
+    }
+
+    /// One tick per photo down the side, the nearest one marked, so you can tell how far in you are.
+    private var rail: some View {
+        let count = min(collection.photos.count, 24)
+        let marked = collection.photos.count > 1 ? Int((Double(railIndex) / Double(collection.photos.count - 1) * Double(count - 1)).rounded()) : 0
+        return VStack(alignment: .trailing, spacing: 7) {
+            ForEach(0..<count, id: \.self) { tick in
+                Capsule()
+                    .fill(tick == marked ? AnyShapeStyle(.tint) : AnyShapeStyle(.foreground.opacity(0.25)))
+                    .frame(width: tick == marked ? 9 : 5, height: 2.5)
+            }
+        }
+        .padding(.trailing, 2)
+        .animation(.snappy(duration: 0.2), value: marked)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// What you do to the batch, in reach and by name. A friend who can add photos gets just that.
+    private var dock: some View {
+        let neutral = collection.backdrop.neutralControls
+        return HStack(spacing: 2) {
+            PhotosPicker(selection: $picked, maxSelectionCount: 60, matching: .images,
+                         preferredItemEncoding: .current, photoLibrary: .shared()) {
+                HStack(spacing: 7) {
+                    if importing { ProgressView().tint(neutral ? Color(uiColor: .systemBackground) : Color.onAccent) }
+                    else { Image(systemName: "plus").font(.body.weight(.bold)) }
+                    Text("Add photos").font(.subheadline.weight(.semibold)).lineLimit(1)
+                }
+                .fixedSize()
+                .foregroundStyle(neutral ? Color(uiColor: .systemBackground) : Color.onAccent)
+                .padding(.horizontal, 18)
+                .frame(height: 48)
+                .background(neutral ? Color.primary : Color.strewnAccent, in: Capsule())
+            }
+            .disabled(importing)
+            if isOwner {
+                dockButton("Frames", "square.inset.filled") { showFrames = true }
+                if frame.kind != .filmStrip {
+                    dockButton("Arrange", "hand.draw") { arrangingBoard = true }
+                        .disabled(collection.photos.isEmpty)
+                }
+                dockButton("Font", "textformat") { showFont = true }
+            }
+        }
+        .padding(7)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.foreground.opacity(0.06), lineWidth: 1))
+        .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
+    private func dockButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(height: 22)
+                Text(title).font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var introLine: String {
@@ -513,19 +621,27 @@ struct GalleryView: View {
     }
 }
 
-/// The quiet line under a print: its frame number and what's known about it, and a star on
-/// the cover. Actions live in the viewer and the long-press menu, so the wall stays a wall.
+/// The line under a print: its frame number and what's known about it, a star on the cover, and
+/// its likes and comments, which you can tap without opening the photo.
 struct PhotoMetaRow: View {
     let collection: PhotoCollection
     let photo: Photo
     let index: Int
     var reactions: PhotoReactions? = nil
+    var onLike: (() -> Void)? = nil
+    var onComments: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Text(exifLine).metaStyle().lineLimit(1)
+            if photo.id == collection.cover?.id {
+                Label("Cover", systemImage: "star.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.strewnAccent)
+                    .labelStyle(TightLabel())
+                    .transition(.scale.combined(with: .opacity))
+            }
             Spacer(minLength: 4)
-            if let reactions { ReactionsLine(reactions: reactions) }
             if let adder = collection.adder(of: photo) {
                 HStack(spacing: 4) {
                     AvatarView(user: adder, size: 16)
@@ -534,15 +650,39 @@ struct PhotoMetaRow: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Added by \(adder.displayName)")
             }
-            if photo.id == collection.cover?.id {
-                Label("Cover", systemImage: "star.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.strewnAccent)
-                    .transition(.scale.combined(with: .opacity))
+            if let reactions {
+                HStack(spacing: 2) {
+                    reaction(reactions.likeCount, reactions.likedByMe ? "heart.fill" : "heart", on: reactions.likedByMe, action: onLike)
+                        .sensoryFeedback(.impact(weight: .light), trigger: reactions.likedByMe)
+                        .accessibilityLabel(reactions.likedByMe ? "Unlike, \(reactions.likeCount.counted("like"))" : "Like, \(reactions.likeCount.counted("like"))")
+                    reaction(reactions.commentCount, "bubble.left", on: false, action: onComments)
+                        .accessibilityLabel("Comments, \(reactions.commentCount)")
+                }
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.leading, 4)
         .animation(.snappy, value: collection.coverPhotoID)
+    }
+
+    private func reaction(_ count: Int, _ symbol: String, on: Bool, action: (() -> Void)?) -> some View {
+        Button { action?() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.footnote.weight(.semibold))
+                if count > 0 { Text("\(count)").font(.caption.weight(.semibold).monospacedDigit()).contentTransition(.numericText()) }
+            }
+            .foregroundStyle(on ? AnyShapeStyle(Color.strewnAccent) : AnyShapeStyle(.secondary))
+            .padding(.horizontal, 7)
+            .frame(minWidth: 34, minHeight: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(action == nil)
+    }
+
+    private struct TightLabel: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 3) { configuration.icon; configuration.title }
+        }
     }
 
     private var exifLine: String {
@@ -588,16 +728,29 @@ struct MasonryLayout: Layout {
     }
 }
 
-/// Notes when the gallery has scrolled past its title. iOS 18 reads the scroll; on iOS 17
-/// the header simply always shows the title.
+/// Notes when the gallery has scrolled past its title, and roughly which photo it has reached.
+/// iOS 18 reads the scroll; on iOS 17 the header simply always shows the title and the rail
+/// stays on the first photo.
 private struct TitleScrollTracker: ViewModifier {
     @Binding var scrolledAway: Bool
+    @Binding var index: Int
+    let count: Int
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
-            content.onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 70 } action: { _, away in
-                scrolledAway = away
-            }
+            content
+                .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top > 70 } action: { _, away in
+                    scrolledAway = away
+                }
+                // Worked out to a whole photo here, so the gallery only redraws when that changes.
+                .onScrollGeometryChange(for: Int.self) { geometry in
+                    let span = geometry.contentSize.height - geometry.containerSize.height
+                    guard span > 0, count > 1 else { return 0 }
+                    let fraction = min(1, max(0, (geometry.contentOffset.y + geometry.contentInsets.top) / span))
+                    return Int((fraction * CGFloat(count - 1)).rounded())
+                } action: { _, now in
+                    index = now
+                }
         } else {
             content.onAppear { scrolledAway = true }
         }

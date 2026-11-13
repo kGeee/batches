@@ -6,7 +6,8 @@ import SwiftUI
 /// - Swipe down to close: the photo follows your finger and the gallery shows through.
 /// - Pinch or double-tap to zoom; drag to look around while zoomed; double-tap to fit again.
 /// - Tap to hide or show the controls; tap a thumbnail to jump.
-/// - The owner can edit a photo or make it the cover from here.
+/// - Like, comment and share sit under the photo, with the latest comments above them.
+/// - Edit, Make cover, Remove and Report are in the menu at the top.
 struct FullFrameViewer: View {
     let photos: [Photo]
     var coverID: UUID?
@@ -32,7 +33,10 @@ struct FullFrameViewer: View {
     var onCommentCount: (Photo, Int) -> Void
 
     @State private var commentsPhoto: Photo?
+    /// The latest comments on each photo looked at, shown under it.
+    @State private var latestComments: [UUID: [PhotoComment]] = [:]
 
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var currentID: UUID?
     @State private var drag: CGSize = .zero
@@ -89,6 +93,15 @@ struct FullFrameViewer: View {
         .statusBarHidden(chromeHidden || drag != .zero)
         .presentationBackground(.clear)
         .sensoryFeedback(.selection, trigger: currentID)
+        .task(id: CommentsKey(photoID: currentID, count: currentID.flatMap { reactions?[$0]?.commentCount } ?? 0)) {
+            await loadLatestComments()
+        }
+        .confirmationDialog("Remove this photo from the batch?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible, presenting: removing) { photo in
+            Button("Remove from batch", role: .destructive) { remove(photo) }
+        } message: { _ in
+            Text("It stays in your Photos library and on this phone.")
+        }
         .sheet(item: $commentsPhoto) { photo in
             if let commentsBatch {
                 PhotoCommentsSheet(photo: photo, collection: commentsBatch) { onCommentCount(photo, $0) }
@@ -128,16 +141,21 @@ struct FullFrameViewer: View {
                 .padding(.bottom, 28)
                 .background(alignment: .top) { scrim(.top) }
             Spacer()
-            VStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 if let caption = current?.caption {
                     Text(caption).batchTitle(captionFont, .headline, weight: .regular)
                         .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
                         .padding(.horizontal, 20)
                 }
+                if let current {
+                    details(current)
+                    actionBar(current)
+                }
                 if photos.count > 1 { thumbnails }
-                if let current { actionBar(current) }
             }
-            .padding(.top, 40)
+            .padding(.top, 48)
+            .padding(.bottom, 4)
             .background(alignment: .bottom) { scrim(.bottom) }
         }
         .foregroundStyle(.white)
@@ -156,9 +174,87 @@ struct FullFrameViewer: View {
                     .animation(.default, value: index)
             }
             Spacer()
-            // Balances the close button so the counter sits in the middle.
-            Color.clear.frame(width: 40, height: 40)
+            if let current, hasMenu {
+                Menu { menuItems(current) } label: { circleIcon("ellipsis") }
+                    .accessibilityLabel("More")
+            } else {
+                // Balances the close button so the counter sits in the middle.
+                Color.clear.frame(width: 40, height: 40)
+            }
         }
+    }
+
+    private var hasMenu: Bool { onEdit != nil || onSetCover != nil || onRemove != nil || onReport != nil }
+
+    /// The things you do to a photo now and then, kept away from the ones you tap every time.
+    @ViewBuilder
+    private func menuItems(_ photo: Photo) -> some View {
+        if let onEdit {
+            Button("Edit", systemImage: "slider.horizontal.3") { onEdit(photo) }
+        }
+        if let onSetCover {
+            let isCover = photo.id == coverID
+            Button(isCover ? "This is the cover" : "Make cover", systemImage: isCover ? "star.fill" : "star") { onSetCover(photo) }
+                .disabled(isCover)
+        }
+        if onRemove != nil {
+            Button("Remove from batch", systemImage: "rectangle.stack.badge.minus", role: .destructive) { removing = photo }
+        }
+        if let onReport {
+            Button("Report photo", systemImage: "flag") { onReport(photo) }
+        }
+    }
+
+    /// Who added the photo, and the latest of what people said about it.
+    @ViewBuilder
+    private func details(_ photo: Photo) -> some View {
+        let adder = commentsBatch?.adder(of: photo)
+        let comments = latestComments[photo.id] ?? []
+        let count = reactions?[photo.id]?.commentCount ?? 0
+        if adder != nil || (count > 0 && !comments.isEmpty) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let adder {
+                    HStack(spacing: 8) {
+                        AvatarView(user: adder, size: 24)
+                        Text("Added by \(adder.displayName)").font(.subheadline.weight(.medium))
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                if count > 0, !comments.isEmpty {
+                    Button { commentsPhoto = photo } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(comments) { comment in
+                                (Text(comment.author?.displayName ?? "Someone").fontWeight(.semibold) + Text("  \(comment.body)"))
+                                    .font(.subheadline)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            if count > comments.count {
+                                Text("View all \(count) comments").font(.footnote).foregroundStyle(.white.opacity(0.6))
+                                    .padding(.top, 2)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the comments")
+                }
+            }
+            .padding(.horizontal, 20)
+            .transition(.opacity)
+        }
+    }
+
+    private func loadLatestComments() async {
+        guard commentsBatch != nil, let id = currentID, (reactions?[id]?.commentCount ?? 0) > 0,
+              let all = try? await model.comments(on: id) else { return }
+        withAnimation(.easeOut(duration: 0.2)) { latestComments[id] = Array(all.suffix(2)) }
+    }
+
+    private struct CommentsKey: Hashable {
+        let photoID: UUID?
+        let count: Int
     }
 
     /// Every frame in the pile, small, so you can see where you are and jump.
@@ -196,54 +292,39 @@ struct FullFrameViewer: View {
         .frame(height: 56)
     }
 
+    /// The three things you do every time: like, comment, share.
     private func actionBar(_ photo: Photo) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 6) {
             if let onLike, let mine = reactions?[photo.id] {
-                actionButton(mine.likeCount > 0 ? "\(mine.likeCount)" : "Like",
-                             systemImage: mine.likedByMe ? "heart.fill" : "heart",
-                             tint: mine.likedByMe ? .strewnAccent : .white) { onLike(photo) }
-                    .sensoryFeedback(.impact(weight: .light), trigger: mine.likedByMe)
-                    .accessibilityLabel(mine.likedByMe ? "Unlike, \(mine.likeCount.counted("like"))" : "Like, \(mine.likeCount.counted("like"))")
+                Button { onLike(photo) } label: {
+                    actionLabel(mine.likeCount > 0 ? "\(mine.likeCount)" : nil, systemImage: mine.likedByMe ? "heart.fill" : "heart",
+                                tint: mine.likedByMe ? .strewnAccent : .white)
+                }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.impact(weight: .light), trigger: mine.likedByMe)
+                .accessibilityLabel(mine.likedByMe ? "Unlike, \(mine.likeCount.counted("like"))" : "Like, \(mine.likeCount.counted("like"))")
             }
             if commentsBatch != nil, let mine = reactions?[photo.id] {
-                actionButton(mine.commentCount > 0 ? "\(mine.commentCount)" : "Comment", systemImage: "bubble.left") {
-                    commentsPhoto = photo
+                Button { commentsPhoto = photo } label: {
+                    actionLabel(mine.commentCount > 0 ? "\(mine.commentCount)" : nil, systemImage: "bubble.left", tint: .white)
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Comments, \(mine.commentCount)")
             }
-            if let onEdit {
-                actionButton("Edit", systemImage: "slider.horizontal.3") { onEdit(photo) }
-            }
-            if let onSetCover {
-                let isCover = photo.id == coverID
-                actionButton(isCover ? "Cover" : "Make cover", systemImage: isCover ? "star.fill" : "star",
-                             tint: isCover ? .strewnAccent : .white) { onSetCover(photo) }
-                    .disabled(isCover)
-                    .sensoryFeedback(.success, trigger: isCover) { _, now in now }
-            }
+            Spacer(minLength: 0)
             if let onShareBatch {
-                actionButton("Share", systemImage: "square.and.arrow.up", action: onShareBatch)
+                Button(action: onShareBatch) { actionLabel(nil, systemImage: "square.and.arrow.up", tint: .white) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Share")
             } else if let shareLink {
                 LinkShareButton(url: shareLink(photo), title: shareTitle, photo: photo) {
-                    actionLabel("Share", systemImage: "square.and.arrow.up", tint: .white)
+                    actionLabel(nil, systemImage: "square.and.arrow.up", tint: .white)
                 }
-                .frame(maxWidth: .infinity)
-            }
-            if onRemove != nil {
-                actionButton("Remove", systemImage: "rectangle.stack.badge.minus") { removing = photo }
-            }
-            if let onReport {
-                actionButton("Report", systemImage: "flag") { onReport(photo) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Share")
             }
         }
-        .confirmationDialog("Remove this photo from the batch?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-                            titleVisibility: .visible, presenting: removing) { photo in
-            Button("Remove from batch", role: .destructive) { remove(photo) }
-        } message: { _ in
-            Text("It stays in your Photos library and on this phone.")
-        }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 4)
+        .padding(.horizontal, 10)
     }
 
     /// Steps to the neighbouring photo first, so the viewer never shows a photo that's gone;
@@ -256,20 +337,16 @@ struct FullFrameViewer: View {
         if next == nil { close() }
     }
 
-    private func actionButton(_ title: String, systemImage: String, tint: Color = .white,
-                              action: @escaping () -> Void) -> some View {
-        Button(action: action) { actionLabel(title, systemImage: systemImage, tint: tint) }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-    }
-
-    private func actionLabel(_ title: String, systemImage: String, tint: Color) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: systemImage).font(.title3).frame(height: 26)   // icons differ in height; labels shouldn't
-            Text(title).font(.caption2.weight(.medium))
+    private func actionLabel(_ count: String?, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage).font(.title2).frame(height: 28)   // icons differ in height
+            if let count {
+                Text(count).font(.body.weight(.semibold).monospacedDigit()).contentTransition(.numericText())
+            }
         }
         .foregroundStyle(tint)
-        .frame(minWidth: 64, minHeight: 44)
+        .padding(.horizontal, 10)
+        .frame(minWidth: 48, minHeight: 48)
         .contentShape(Rectangle())
     }
 

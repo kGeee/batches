@@ -43,6 +43,8 @@ protocol Backend: Sendable {
     func addComment(id: UUID, body: String, photoID: UUID) async throws
     /// Your own comment, or any comment on a batch you own.
     func deleteComment(_ id: UUID) async throws
+    /// Likes and comments other people left on these photos, newest first.
+    func activity(on photoIDs: [UUID], limit: Int) async throws -> [ActivityItem]
 
     // Your desk
     /// How you've arranged your desk, or nil if you never have. Only you can read it.
@@ -132,7 +134,11 @@ actor MockBackend: Backend {
     private var contributors: Set<Pair> = []   // members who may add photos
     private var blocks: Set<Pair> = []   // (blocker, blocked)
     private var desks: [UUID: DeskLayout] = [:]
-    private var photoLikes: Set<Pair> = []   // (photo, person)
+    // (photo, person). Two likes to start with, so the demo's desk and Activity have something to show.
+    private var photoLikes: Set<Pair> = Set(SampleData.collections.first?.photos.prefix(2).enumerated().flatMap { index, photo in
+        (index == 0 ? [SampleData.maya, SampleData.theo] : [SampleData.maya]).map { Pair(a: photo.id, b: $0.id) }
+    } ?? [])
+    private var likeTimes: [Pair: Date] = [:]
     // One comment from Maya, so the demo shows what comments look like and how to report one.
     private var photoComments: [PhotoComment] = SampleData.collections.first?.photos.first.map {
         [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000001")!, photoID: $0.id, author: SampleData.maya,
@@ -250,6 +256,20 @@ actor MockBackend: Backend {
         let me = try requireMe()
         guard canViewPhoto(photoID) else { throw BackendError.notAllowed }
         if liked { photoLikes.insert(Pair(a: photoID, b: me)) } else { photoLikes.remove(Pair(a: photoID, b: me)) }
+        likeTimes[Pair(a: photoID, b: me)] = liked ? .now : nil
+    }
+
+    func activity(on photoIDs: [UUID], limit: Int) async throws -> [ActivityItem] {
+        let me = try requireMe()
+        let ids = Set(photoIDs)
+        let likes = photoLikes.filter { ids.contains($0.a) && $0.b != me && !isBlocked(me, $0.b) }.map { like in
+            ActivityItem(id: "like-\(like.a)-\(like.b)", kind: .like, actor: people[like.b], actorID: like.b, photoID: like.a,
+                         at: likeTimes[like] ?? .now.addingTimeInterval(-3600))
+        }
+        let comments = photoComments.filter { ids.contains($0.photoID) && $0.authorID != me && !isBlocked(me, $0.authorID) }.map {
+            ActivityItem(id: "comment-\($0.id)", kind: .comment($0.body), actor: $0.author, actorID: $0.authorID, photoID: $0.photoID, at: $0.createdAt)
+        }
+        return Array((likes + comments).sorted { $0.at > $1.at }.prefix(limit))
     }
 
     func comments(on photoID: UUID) async throws -> [PhotoComment] {

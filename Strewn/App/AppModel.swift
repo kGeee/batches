@@ -16,6 +16,12 @@ final class AppModel {
     private(set) var blocked: [User] = []
     /// How you've arranged your desk. Kept on this phone too, so it's there straight away.
     private(set) var desk = DeskLayout()
+    /// Likes and comments added up per batch, for your shared batches and the feed.
+    private(set) var batchTotals: [UUID: PhotoReactions] = [:]
+    /// Likes and comments other people left on your photos, newest first.
+    private(set) var activity: [ActivityItem] = []
+    /// Activity newer than this hasn't been looked at yet.
+    private(set) var activitySeenAt = Date.distantPast
     /// A pile opened from a strewn://pile link.
     var linkedPile: PhotoCollection?
     /// The photo a strewn://pile link pointed at, opened inside linkedPile.
@@ -103,6 +109,9 @@ final class AppModel {
         feed = []
         following = []
         blocked = []
+        batchTotals = [:]
+        activity = []
+        activitySeenAt = .distantPast
         desk = DeskLayout()
         deskLoadedFor = nil
         auth = .signedOut
@@ -112,6 +121,7 @@ final class AppModel {
         do {
             guard let user = try await backend.profile(id: id) else { auth = .needsProfile; return }
             me = user
+            activitySeenAt = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: Self.activityKey(user.id)))
             auth = .signedIn
             await refresh()
         } catch {
@@ -142,7 +152,61 @@ final class AppModel {
             errorMessage = error.localizedDescription
         }
         await deskLoaded
+        await refreshSocial()
     }
+
+    // MARK: Activity
+
+    var unseenActivity: [ActivityItem] { activity.filter { $0.at > activitySeenAt } }
+
+    /// Reloads the like and comment totals for batches, and what people did to your photos.
+    /// Quietly keeps what it had if the server can't be reached or doesn't have the tables yet.
+    func refreshSocial() async {
+        guard let me else { return }
+        let shared = myCollections.filter(\.isShared)
+        let piles = shared + feed
+        var byPhoto: [UUID: PhotoReactions] = [:]
+        // In chunks: the ids travel in the request's address, which has a length limit.
+        for chunk in piles.flatMap({ $0.photos.map(\.id) }).chunked(100) {
+            guard let part = try? await backend.reactions(to: chunk) else { return }
+            byPhoto.merge(part) { _, new in new }
+        }
+        var totals: [UUID: PhotoReactions] = [:]
+        for pile in piles {
+            var sum = PhotoReactions()
+            for photo in pile.photos {
+                guard let one = byPhoto[photo.id] else { continue }
+                sum.likeCount += one.likeCount
+                sum.commentCount += one.commentCount
+                sum.likedByMe = sum.likedByMe || one.likedByMe
+            }
+            totals[pile.id] = sum
+        }
+        batchTotals = totals
+
+        // Your photos: everything in your shared batches, and what you added to friends' batches.
+        let mine = shared.flatMap { $0.photos.map(\.id) } + feed.flatMap { $0.photos.filter { $0.addedBy == me.id }.map(\.id) }
+        let hidden = Set(blocked.map(\.id))
+        var items: [ActivityItem] = []
+        for chunk in mine.chunked(100) {
+            guard let part = try? await backend.activity(on: chunk, limit: 40) else { return }
+            items += part
+        }
+        activity = Array(items.filter { !hidden.contains($0.actorID) }.sorted { $0.at > $1.at }.prefix(60))
+    }
+
+    func markActivitySeen() {
+        guard let me, !unseenActivity.isEmpty else { return }
+        activitySeenAt = .now
+        UserDefaults.standard.set(activitySeenAt.timeIntervalSince1970, forKey: Self.activityKey(me.id))
+    }
+
+    /// The batch a photo is in, among yours and the feed's.
+    func batch(containing photoID: UUID) -> PhotoCollection? {
+        (myCollections + feed).first { $0.photos.contains { $0.id == photoID } }
+    }
+
+    private static func activityKey(_ id: UUID) -> String { "strewn.activitySeen.\(id.uuidString.lowercased())" }
 
     // MARK: People
 
@@ -700,5 +764,11 @@ final class AppModel {
             do { try await backend.save(collection) }
             catch { errorMessage = error.localizedDescription }
         }
+    }
+}
+
+private extension Array {
+    func chunked(_ size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }

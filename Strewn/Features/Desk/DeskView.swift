@@ -5,8 +5,13 @@ import SwiftUI
 /// any of those. Moving things only happens in Arrange, so tapping and scrolling stay as they are.
 struct DeskView: View {
     @Environment(AppModel.self) private var model
+    @Environment(AppChrome.self) private var chrome: AppChrome?
     @Namespace private var pileSpace
     @State private var openID: UUID?
+    @State private var filter = DeskFilter.all
+    @State private var searching = false
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
     @State private var openGroupID: UUID?
     @State private var showNewPile = false
     @State private var sharing: PileRef?
@@ -29,7 +34,30 @@ struct DeskView: View {
     // Top-aligned, so a batch with a short title doesn't sit lower than the one beside it.
     private let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
     private var layout: DeskLayout { model.desk }
+    /// Everything on the desk. Moving and grouping work on this, whatever is filtered out of view.
     private var tiles: [DeskTile] { layout.tiles(for: model.myCollections) }
+    /// What's showing: `tiles` narrowed by the filter and the search. Arrange shows everything.
+    private var shownTiles: [DeskTile] {
+        guard !arranging else { return tiles }
+        let words = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return tiles.filter { tile in
+            let piles: [PhotoCollection]
+            switch tile {
+            case .pile(let pile): piles = [pile]
+            case .group(_, let members): piles = members
+            }
+            guard piles.contains(where: filter.includes) else { return false }
+            guard !words.isEmpty else { return true }
+            return tile.title.lowercased().contains(words)
+                || piles.contains { $0.title.lowercased().contains(words) || ($0.place?.lowercased().contains(words) ?? false) }
+        }
+    }
+    private var narrowed: Bool { !arranging && (filter != .all || !query.trimmingCharacters(in: .whitespaces).isEmpty) }
+    /// The first batch on the desk, given room at the top of the grid.
+    private var hero: PhotoCollection? {
+        guard layout.mode == .grid, !arranging, !narrowed, tiles.count >= 3, case .pile(let pile)? = tiles.first else { return nil }
+        return pile
+    }
     private var openGroup: (group: DeskGroup, piles: [PhotoCollection])? {
         for case .group(let group, let piles) in tiles where group.id == openGroupID { return (group, piles) }
         return nil
@@ -55,7 +83,11 @@ struct DeskView: View {
                 .sensoryFeedback(.impact(weight: .light), trigger: openID)
                 .sensoryFeedback(.selection, trigger: dropTargetID)
                 // The gallery gets the whole screen, as it does from Friends.
-                .toolbar(openID == nil && openGroupID == nil ? .automatic : .hidden, for: .tabBar)
+                .coversTabBar(openID != nil || openGroupID != nil, key: "desk")
+                // Likes and comments made while a batch was open show on the desk once it closes.
+                .onChange(of: openID) { before, now in
+                    if before != nil, now == nil { Task { await model.refreshSocial() } }
+                }
                 .sheet(item: $renamingGroup) { group in
                     PaperTextPrompt(title: "Name this group", placeholder: "Name", initial: group.title) { title in
                         groupNameDraft = title
@@ -98,7 +130,7 @@ struct DeskView: View {
 
     @ViewBuilder
     private var deskSurface: some View {
-        if layout.mode == .freehand && !tiles.isEmpty {
+        if layout.mode == .freehand && !shownTiles.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 top.padding(.horizontal, 14)
                 GeometryReader { geo in
@@ -111,11 +143,16 @@ struct DeskView: View {
                     top.padding(.horizontal, 14)
                     if tiles.isEmpty {
                         EmptyDesk { showNewPile = true }.padding(.horizontal, 14)
+                    } else if shownTiles.isEmpty {
+                        Text(query.isEmpty ? "No \(filter.title.lowercased()) batches yet." : "No batches match “\(query)”.")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).padding(.top, 40)
                     } else if layout.mode == .sideways {
                         sidewaysRow
                     } else {
+                        if let hero { heroTile(hero).padding(.horizontal, 14).padding(.bottom, 6) }
                         LazyVGrid(columns: columns, spacing: 18) {
-                            ForEach(tiles) { slottedTile($0) }
+                            ForEach(hero == nil ? shownTiles : Array(shownTiles.dropFirst())) { slottedTile($0) }
                         }
                         .coordinateSpace(name: Self.tileSpace)
                         .padding(.horizontal, 14)
@@ -127,13 +164,156 @@ struct DeskView: View {
     }
 
     private var top: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ProfileHeader(user: model.me, pileCount: model.myCollections.count,
                           frameCount: model.myCollections.reduce(0) { $0 + $1.photos.count },
-                          onNewPile: { showNewPile = true }, onAccount: { showAccount = true },
+                          onSearch: model.myCollections.isEmpty ? nil : { toggleSearch() }, onAccount: { showAccount = true },
                           onFollowList: { tab in if let me = model.me { followList = FollowListRoute(user: me, tab: tab) } })
-            if !model.myCollections.isEmpty { arrangeBar }
+            if searching { searchField }
+            if let news { activityLine(news) }
+            if !model.myCollections.isEmpty {
+                if arranging { arrangeBar } else { filterBar }
+            }
         }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search your batches", text: $query)
+                .focused($searchFocused)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+            Button { toggleSearch() } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close search")
+        }
+        .paperField(focused: searchFocused)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    private func toggleSearch() {
+        withAnimation(.snappy) {
+            searching.toggle()
+            if !searching { query = "" }
+        }
+        searchFocused = searching
+    }
+
+    /// Narrows the desk to one kind of batch, with the layout and Arrange tucked at the end.
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(DeskFilter.allCases) { option in
+                        let selected = filter == option
+                        Button {
+                            withAnimation(.snappy) { filter = option }
+                        } label: {
+                            Text(option.title)
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 13)
+                                .frame(height: 32)
+                                .foregroundStyle(selected ? Color.mat : Color.primary)
+                                .background(selected ? Color.primary : Color.clear, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Color.secondary.opacity(selected ? 0 : 0.3), lineWidth: 1))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+            .scrollIndicators(.hidden)
+            Menu {
+                Picker("Layout", selection: Binding(get: { layout.mode },
+                                                    set: { mode in withAnimation(.snappy) { model.changeDesk { $0.mode = mode } } })) {
+                    ForEach(DeskLayout.Mode.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+                }
+                Button("Arrange", systemImage: "arrow.up.and.down.and.arrow.left.and.right") {
+                    withAnimation(.snappy) { arranging = true }
+                }
+            } label: {
+                Image(systemName: layout.mode.symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 40, height: 32)
+                    .foregroundStyle(Color.primary)
+                    .background(Color.card, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .accessibilityLabel("Layout, \(layout.mode.title)")
+        }
+    }
+
+    // MARK: Activity
+
+    private struct News {
+        let people: [User]
+        let headline: String
+        let detail: String
+        let batch: PhotoCollection?
+    }
+
+    /// What's happened to your photos since you last looked, summed up in two lines.
+    private var news: News? {
+        let unseen = model.unseenActivity
+        guard !unseen.isEmpty, !arranging else { return nil }
+        var people: [User] = []
+        var seen: Set<UUID> = []
+        for item in unseen where seen.insert(item.actorID).inserted {
+            if let actor = item.actor { people.append(actor) }
+        }
+        let names = people.prefix(2).map(\.displayName)
+        let others = seen.count - names.count
+        var who = names.joined(separator: names.count == 2 && others == 0 ? " and " : ", ")
+        if who.isEmpty { who = seen.count.counted("person", plural: "people") }
+        else if others > 0 { who += " and \(others.counted("other"))" }
+
+        let likes = unseen.filter(\.isLike).count
+        let comments = unseen.count - likes
+        let verb = likes > 0 && comments > 0 ? "liked and commented" : likes > 0 ? "liked your photos" : "commented"
+        // The batch most of it happened in.
+        let batches = Dictionary(grouping: unseen.compactMap { model.batch(containing: $0.photoID) }, by: \.id)
+        let busiest = batches.max { $0.value.count < $1.value.count }?.value.first
+        // Counts first: a long title is what gets cut short, not the numbers.
+        var parts: [String] = []
+        if likes > 0 { parts.append(likes.counted("like")) }
+        if comments > 0 { parts.append(comments.counted("comment")) }
+        if let busiest { parts.append(busiest.title + (batches.count > 1 ? " and \(batches.count - 1) more" : "")) }
+        return News(people: people, headline: "\(who) \(verb)", detail: parts.joined(separator: " · "), batch: busiest)
+    }
+
+    private func activityLine(_ news: News) -> some View {
+        Button {
+            model.markActivitySeen()
+            if let batch = news.batch, model.myCollections.contains(where: { $0.id == batch.id }) {
+                open(batch)
+            } else {
+                chrome?.showsActivity = true
+                chrome?.tab = .friends
+            }
+        } label: {
+            HStack(spacing: 10) {
+                HStack(spacing: -8) {
+                    ForEach(news.people.prefix(3)) { AvatarView(user: $0, size: 28) }
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(news.headline).font(.footnote.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                    Text(news.detail).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 52)
+            .background(Color.card, in: RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(news.headline). \(news.detail)")
+        .transition(.opacity)
     }
 
     /// Picks the layout, and goes in and out of Arrange.
@@ -192,7 +372,7 @@ struct DeskView: View {
     private var sidewaysRow: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 18) {
-                ForEach(tiles) { slottedTile($0).frame(width: 250) }
+                ForEach(shownTiles) { slottedTile($0).frame(width: 250) }
             }
             .coordinateSpace(name: Self.tileSpace)
             .padding(.horizontal, 14)
@@ -210,7 +390,7 @@ struct DeskView: View {
         let right = (spots.values.map(\.x).max() ?? 0) + DeskLayout.tileWidth / 2 + 14
         let bottom = (spots.values.map(\.y).max() ?? 0) + DeskLayout.tileHeight / 2 + 24
         return ZStack {
-            ForEach(tiles) { tile in
+            ForEach(shownTiles) { tile in
                 let spot = spots[tile.id] ?? .zero
                 let dragging = draggingID == tile.id
                 tileBody(tile)
@@ -249,6 +429,27 @@ struct DeskView: View {
         return CGSize(width: dragPoint.x - grabOffset.width - slot.midX, height: dragPoint.y - grabOffset.height - slot.midY)
     }
 
+    /// The first batch, drawn large with its likes and comments beside the title.
+    private func heroTile(_ collection: PhotoCollection) -> some View {
+        let tile = DeskTile.pile(collection)
+        return VStack(alignment: .leading, spacing: 4) {
+            Group {
+                if openID == collection.id {
+                    Color.clear.aspectRatio(3 / 2, contentMode: .fit)
+                } else {
+                    DeskPileView(collection: collection, namespace: pileSpace)
+                        .aspectRatio(3 / 2, contentMode: .fit)
+                        // The pile is square; centered, not pushed to the leading edge.
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { open(collection) }
+            .contextMenu { tileMenu(tile) }
+            PileCaption(collection: collection, showsVisibility: true, prominent: true, totals: model.batchTotals[collection.id])
+        }
+    }
+
     private func tileBody(_ tile: DeskTile) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Group {
@@ -277,7 +478,7 @@ struct DeskView: View {
             .contextMenu { tileMenu(tile) }
             switch tile {
             case .pile(let collection):
-                PileCaption(collection: collection, showsVisibility: true)
+                PileCaption(collection: collection, showsVisibility: true, totals: model.batchTotals[collection.id])
             case .group(let group, let piles):
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.title).titleStyle(.subheadline).lineLimit(2)
@@ -541,26 +742,87 @@ struct PileCaption: View {
     let collection: PhotoCollection
     /// Your own piles show who can see them.
     var showsVisibility = false
+    /// The large batch at the top of the desk: a bigger title.
+    var prominent = false
+    /// Likes and comments across the batch's photos, when they're known.
+    var totals: PhotoReactions? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                if showsVisibility {
-                    Image(systemName: collection.visibility.symbol).font(.caption2).foregroundStyle(.secondary)
-                        .accessibilityLabel(collection.visibility.title)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(collection.title).batchTitle(collection.font, prominent ? .title3 : .subheadline).lineLimit(2)
+                if let totals, totals.likeCount + totals.commentCount > 0 {
+                    Spacer(minLength: 4)
+                    ReactionsLine(reactions: totals)
                 }
-                Text(collection.title).batchTitle(collection.font, .subheadline).lineLimit(2)
             }
-            Text(metaLine).metaStyle().lineLimit(2)
+            HStack(spacing: 6) {
+                if showsVisibility { AudienceChip(collection: collection) }
+                // The longest line that fits beside the chip, so it never wraps to a second.
+                ViewThatFits(in: .horizontal) {
+                    ForEach(metaLines, id: \.self) { Text($0).metaStyle().lineLimit(1) }
+                }
+            }
         }
         .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
     }
 
-    private var metaLine: String {
-        var parts = [collection.photos.count.counted("frame")]
-        if let date = collection.shotOn { parts.append(date.formatted(.dateTime.month(.abbreviated).day())) }
-        if let place = collection.place { parts.append(place) }
-        return parts.joined(separator: " · ")
+    private var metaLines: [String] {
+        let count = collection.photos.count
+        let date = collection.shotOn?.formatted(.dateTime.month(.abbreviated).day())
+        var full = [count.counted("frame")]
+        if let date { full.append(date) }
+        var lines: [String] = []
+        if let place = collection.place { lines.append((full + [place]).joined(separator: " · ")) }
+        lines.append(full.joined(separator: " · "))
+        lines.append((["\(count)"] + (date.map { [$0] } ?? [])).joined(separator: " · "))
+        return lines
+    }
+}
+
+/// Who can see one of your batches, in words: "Followers", "2 people", "Only me".
+struct AudienceChip: View {
+    let collection: PhotoCollection
+
+    var body: some View {
+        let shared = collection.isShared
+        HStack(spacing: 3) {
+            Image(systemName: collection.visibility.symbol)
+            Text(collection.audienceLabel).lineLimit(1)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(shared ? AnyShapeStyle(Color.strewnAccent) : AnyShapeStyle(.secondary))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(shared ? Color.strewnAccent.opacity(0.12) : Color.secondary.opacity(0.12), in: Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Visible to: \(collection.visibility.title)")
+    }
+}
+
+/// The kinds of batch the desk can be narrowed to.
+enum DeskFilter: String, CaseIterable, Identifiable {
+    case all, shared, onlyMe, group
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .shared: "Shared"
+        case .onlyMe: "Private"
+        case .group: "Group"
+        }
+    }
+
+    func includes(_ pile: PhotoCollection) -> Bool {
+        switch self {
+        case .all: true
+        case .shared: pile.isShared
+        case .onlyMe: !pile.isShared
+        case .group: pile.isGroup
+        }
     }
 }
 
@@ -569,7 +831,8 @@ struct ProfileHeader: View {
     let user: User?
     let pileCount: Int
     let frameCount: Int
-    var onNewPile: () -> Void = {}
+    /// nil hides the search button, as on an empty desk.
+    var onSearch: (() -> Void)? = nil
     var onAccount: () -> Void = {}
     var onFollowList: (FollowListRoute.Tab) -> Void = { _ in }
 
@@ -592,18 +855,20 @@ struct ProfileHeader: View {
                 }
             }
             Spacer(minLength: 8)
-            Button(action: onNewPile) {
-                Image(systemName: "plus").font(.title3.weight(.semibold)).foregroundStyle(Color.onAccent)
-                    .frame(width: 44, height: 44)
-                    .background(Color.strewnAccent, in: Circle())
-                    .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+            // New batch is in the bar at the bottom, under the thumb.
+            if let onSearch {
+                Button(action: onSearch) {
+                    Image(systemName: "magnifyingglass").font(.body.weight(.semibold)).foregroundStyle(Color.strewnAccent)
+                        .frame(width: 44, height: 44)
+                        .background(Color.strewnAccent.opacity(0.12), in: Circle())
+                }
+                .accessibilityLabel("Search your batches")
             }
-            .accessibilityLabel("New batch")
             Button(action: onAccount) { AvatarView(user: user, size: 44) }
                 .accessibilityLabel("Account")
         }
         .padding(.top, 16)
-        .padding(.bottom, 6)
+        .padding(.bottom, 2)
     }
 }
 

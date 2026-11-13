@@ -216,6 +216,30 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
         try await client.from("photo_comments").delete().eq("id", value: id.uuidString).execute()
     }
 
+    func activity(on photoIDs: [UUID], limit: Int) async throws -> [ActivityItem] {
+        guard !photoIDs.isEmpty else { return [] }
+        let me = try await myID()
+        let ids = photoIDs.map(\.uuidString)
+        // Row level security leaves out people across a block.
+        async let likeRows: [LikeActivityRow] = client.from("photo_likes")
+            .select("photo_id, user_id, created_at, liker:profiles!user_id(*)")
+            .in("photo_id", values: ids).neq("user_id", value: me.uuidString)
+            .order("created_at", ascending: false).limit(limit).execute().value
+        async let commentRows: [CommentRow] = client.from("photo_comments")
+            .select("id, photo_id, author_id, body, created_at, author:profiles!author_id(*)")
+            .in("photo_id", values: ids).neq("author_id", value: me.uuidString)
+            .order("created_at", ascending: false).limit(limit).execute().value
+        let (likes, comments) = try await (likeRows, commentRows)
+        let items = likes.map {
+            ActivityItem(id: "like-\($0.photo_id)-\($0.user_id)", kind: .like, actor: $0.liker?.model, actorID: $0.user_id,
+                         photoID: $0.photo_id, at: $0.created_at)
+        } + comments.map {
+            ActivityItem(id: "comment-\($0.id)", kind: .comment($0.body), actor: $0.author?.model, actorID: $0.author_id,
+                         photoID: $0.photo_id, at: $0.created_at)
+        }
+        return Array(items.sorted { $0.at > $1.at }.prefix(limit))
+    }
+
     // MARK: Your desk
 
     func deskLayout() async throws -> DeskLayout? {
@@ -441,6 +465,7 @@ private struct ReportRow: Encodable {
 }
 private struct LikeRow: Codable { let photo_id: UUID; let user_id: UUID }
 private struct CommentPhotoRow: Decodable { let photo_id: UUID }
+private struct LikeActivityRow: Decodable { let photo_id: UUID; let user_id: UUID; let created_at: Date; let liker: ProfileRow? }
 private struct NewComment: Encodable { let id: UUID; let photo_id: UUID; let author_id: UUID; let body: String }
 private struct CommentRow: Decodable {
     let id: UUID; let photo_id: UUID; let author_id: UUID; let body: String; let created_at: Date; let author: ProfileRow?
