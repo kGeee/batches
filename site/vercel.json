@@ -17,7 +17,11 @@
   "rewrites": [
     {
       "source": "/b/:id",
-      "destination": "/b"
+      "destination": "/app/index.html"
+    },
+    {
+      "source": "/app/:path((?!assets/).*)",
+      "destination": "/app/index.html"
     }
   ],
   "headers": [
@@ -27,6 +31,15 @@
         {
           "key": "Content-Type",
           "value": "application/json"
+        }
+      ]
+    },
+    {
+      "source": "/app/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     }

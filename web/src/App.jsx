@@ -1,79 +1,128 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as api from './api.js'
-
-// Routes: #/ desk · #/friends · #/people · #/pile/<id> · #/u/<handle>
-function useRoute() {
-  const read = () => window.location.hash.replace(/^#\/?/, '').split('/')
-  const [route, setRoute] = useState(read)
-  useEffect(() => {
-    const on = () => setRoute(read())
-    window.addEventListener('hashchange', on)
-    return () => window.removeEventListener('hashchange', on)
-  }, [])
-  return route
-}
+import { clearPhotos } from './photos.js'
+import { fontFamily } from './look.js'
+import BatchPage from './Batch.jsx'
+import { Avatar, Link, Menu, Pile, Spinner, appURL, batchURL, counted, go, parseRoute, relative, shortDate, useLocation } from './ui.jsx'
 
 export default function App() {
-  const [session, setSession] = useState(undefined)   // undefined = still loading
+  const loc = useLocation()
+  const route = parseRoute(loc.pathname, loc.search)
+  const [session, setSession] = useState(undefined)   // undefined while restoring
   const [me, setMe] = useState(undefined)
+  const [linkProblem, setLinkProblem] = useState(null)
 
   useEffect(() => {
-    api.supabase.auth.getSession().then(({ data }) => setSession(data.session))
-    const { data } = api.supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+    // An email link comes back with ?code= (or an error). supabase-js trades the code for a
+    // session; the address is then tidied so a reload or a copied link doesn't carry it.
+    const params = new URLSearchParams(window.location.search)
+    const hash = new URLSearchParams(window.location.hash.slice(1))
+    const fromLink = params.has('code') || params.has('error') || hash.has('error')
+    const error = params.get('error_description') ?? hash.get('error_description')
+    api.supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+      if (fromLink) {
+        if (!data.session) {
+          setLinkProblem(error ?? 'That sign-in link didn\'t work here. It only works in the browser you asked for it from, once. Enter the code from the email instead, or ask for a new one.')
+        }
+        for (const k of ['code', 'error', 'error_code', 'error_description']) params.delete(k)
+        const q = params.toString()
+        window.history.replaceState(window.history.state, '', window.location.pathname + (q ? `?${q}` : ''))
+      }
+    })
+    const { data } = api.supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s)
+      if (event === 'SIGNED_OUT') clearPhotos()
+    })
     return () => data.subscription.unsubscribe()
   }, [])
 
+  const userID = session?.user?.id
   useEffect(() => {
-    if (!session) { setMe(session === null ? null : undefined); return }
-    api.profile(session.user.id).then(setMe).catch(() => setMe(null))
-  }, [session])
+    if (!userID) { setMe(session === null ? null : undefined); return }
+    setMe(undefined)
+    api.profile(userID).then(setMe).catch(() => setMe(null))
+  }, [userID]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (session === undefined || (session && me === undefined)) return <Splash />
-  if (!session) return <SignIn />
+  useEffect(() => {
+    document.title = route.page === 'batch' ? 'A batch on Batches' : 'Batches'
+  }, [route.page])
+
+  if (session === undefined || (session && me === undefined)) return <Spinner />
+  if (!session) return <SignIn shared={route.page === 'batch' ? route : null} linkProblem={linkProblem} />
   if (!me) return <CreateProfile userID={session.user.id} email={session.user.email} onDone={setMe} />
-  return <Signed me={me} />
+  return <Signed me={me} route={route} />
 }
 
-function Splash() {
-  return <div className="center"><div className="spinner" /></div>
+// Signing in -------------------------------------------------------------------------------------
+
+function friendly(error) {
+  const m = error?.message ?? String(error)
+  if (error?.status === 429 || /rate limit|security purposes|too many/i.test(m)) {
+    return 'Too many sign-in emails have gone out in the last little while. Wait a few minutes and try again, or use the code from an email you already have.'
+  }
+  if (/expired|invalid|otp/i.test(m)) return "That code didn't work. Check it, or ask for a new one."
+  return m
 }
 
-// Account ----------------------------------------------------------------------------------------
-
-function SignIn() {
+function SignIn({ shared, linkProblem }) {
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState('')
+  const [problem, setProblem] = useState(linkProblem ?? '')
 
   const run = async (work) => {
     setBusy(true); setProblem('')
-    try { await work() } catch (e) { setProblem(e.message) } finally { setBusy(false) }
+    try { await work() } catch (e) { setProblem(friendly(e)) } finally { setBusy(false) }
   }
+  // The email's link comes back to this same page, so a shared link opens straight after.
+  const returnTo = window.location.origin + window.location.pathname + window.location.search
 
   return (
-    <div className="signin">
-      <PrintStack />
-      <h1 className="wordmark">Strewn</h1>
-      <p className="lede">Your photos in piles, full frame, shared with the people who were there.</p>
-      {!sent ? (
-        <form onSubmit={(e) => { e.preventDefault(); run(async () => { await api.sendSignInEmail(email.trim()); setSent(true) }) }}>
-          <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
-          <button className="primary wide" disabled={busy || !email.includes('@')}>Email me a sign-in link</button>
-        </form>
-      ) : (
-        <form onSubmit={(e) => { e.preventDefault(); run(() => api.verifyCode(email.trim(), code)) }}>
-          <p>We sent a sign-in link to <b>{email}</b>. Open it on this computer.</p>
-          <p className="meta">If the email has a six-digit code instead, enter it here.</p>
-          <input inputMode="numeric" placeholder="123456" value={code} maxLength={6}
-                 onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} className="code" />
-          <button className="primary wide" disabled={busy || code.length !== 6}>Sign in</button>
-          <button type="button" className="link" onClick={() => { setSent(false); setCode('') }}>Use a different email</button>
-        </form>
-      )}
-      {problem && <p className="problem">{problem}</p>}
-    </div>
+    <main className="signin">
+      <a className="brand" href="/"><img src="/img/icon.png" alt="" width="34" height="34" /><span>Batches</span></a>
+      <div className="card signin-card">
+        {shared ? (
+          <>
+            <h1 className="title big">A batch on Batches</h1>
+            <p className="lede">Someone shared a batch of photos with you.</p>
+            <a className="button primary wide" href={appURL(shared.id, shared.photo)}>Open in Batches</a>
+            <p className="or"><span>No app? Sign in to see it here</span></p>
+          </>
+        ) : (
+          <>
+            <h1 className="title big">Sign in</h1>
+            <p className="lede">See your desk, your friends' batches, and every photo full frame.</p>
+          </>
+        )}
+        {!sent ? (
+          <form onSubmit={(e) => { e.preventDefault(); run(async () => { await api.sendCode(email.trim(), returnTo); setSent(true) }) }}>
+            <label className="label" htmlFor="email">Email</label>
+            <input id="email" type="email" autoComplete="email" placeholder="you@example.com" value={email}
+                   onChange={(e) => setEmail(e.target.value)} required autoFocus={!shared} />
+            <button className={`${shared ? 'secondary' : 'primary'} wide`} disabled={busy || !/.+@.+\..+/.test(email.trim())}>
+              {busy ? 'Sending…' : 'Email me a code'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={(e) => { e.preventDefault(); run(() => api.verifyCode(email.trim(), code)) }}>
+            <p>We emailed a code to <b>{email.trim()}</b>.</p>
+            <label className="label" htmlFor="code">Code</label>
+            <input id="code" className="code" inputMode="numeric" autoComplete="one-time-code" placeholder="123456"
+                   value={code} maxLength={8} autoFocus onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
+            <button className="primary wide" disabled={busy || code.length < 6}>{busy ? 'Signing in…' : 'Sign in'}</button>
+            <p className="meta">If the email has a link instead, open it in this browser.</p>
+            <button type="button" className="link" onClick={() => { setSent(false); setCode(''); setProblem('') }}>Use a different email</button>
+          </form>
+        )}
+        {problem && <p className="problem" role="alert">{problem}</p>}
+      </div>
+      <p className="fineprint meta">
+        {shared ? 'Only people the owner shared it with can see it. ' : ''}
+        <a href="/privacy">Privacy</a> · <a href="/support">Support</a>
+      </p>
+    </main>
   )
 }
 
@@ -87,143 +136,181 @@ function CreateProfile({ userID, email, onDone }) {
   useEffect(() => {
     setAvailable(null)
     if (!valid) return
-    const t = setTimeout(() => api.isHandleAvailable(handle).then(setAvailable), 300)
+    const t = setTimeout(() => api.isHandleAvailable(handle).then(setAvailable).catch(() => setAvailable(null)), 300)
     return () => clearTimeout(t)
   }, [handle, valid])
 
   return (
-    <div className="signin">
-      <h1 className="title">Make your profile</h1>
-      <p className="lede">This is how friends find you.</p>
-      <form onSubmit={async (e) => {
-        e.preventDefault()
-        try { onDone(await api.createProfile(userID, handle, name.trim())) } catch (err) { setProblem(err.message) }
-      }}>
-        <input placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} autoFocus />
-        <div className="handle">
-          <span>@</span>
-          <input placeholder="handle" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase())} maxLength={24} />
-        </div>
-        <p className="meta">
-          {!handle ? '3–24 letters, numbers, _ or .' : !valid ? 'Only a–z, 0–9, _ and ., at least 3.'
-            : available === null ? 'Checking…' : available ? '✓ Available' : 'Taken'}
-        </p>
-        <button className="primary wide" disabled={!name.trim() || !valid || !available}>Continue</button>
-      </form>
-      {problem && <p className="problem">{problem}</p>}
-    </div>
+    <main className="signin">
+      <div className="card signin-card">
+        <h1 className="title big">Make your profile</h1>
+        <p className="lede">This is how friends find you and share batches with you.</p>
+        <form onSubmit={async (e) => {
+          e.preventDefault()
+          try { onDone(await api.createProfile(userID, handle, name.trim())) } catch (err) { setProblem(err.message) }
+        }}>
+          <label className="label" htmlFor="name">Name</label>
+          <input id="name" placeholder="Your name" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} autoFocus />
+          <label className="label" htmlFor="handle">Handle</label>
+          <div className="handle">
+            <span>@</span>
+            <input id="handle" placeholder="handle" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase())} maxLength={24} />
+          </div>
+          <p className="meta">
+            {!handle ? '3–24 letters, numbers, _ or .' : !valid ? 'Only a–z, 0–9, _ and ., at least 3.'
+              : available === null ? 'Checking…' : available ? '✓ Available' : 'Taken'}
+          </p>
+          <button className="primary wide" disabled={!name.trim() || !valid || !available}>Continue</button>
+        </form>
+        {problem && <p className="problem">{problem}</p>}
+        <button className="link" onClick={() => api.signOut()}>Sign out</button>
+      </div>
+    </main>
   )
 }
 
 // Signed in --------------------------------------------------------------------------------------
 
-function Signed({ me }) {
-  const route = useRoute()
+function Signed({ me, route }) {
   const [following, setFollowing] = useState(new Set())
-  const refreshFollowing = useCallback(() => api.followingIDs(me.id).then(setFollowing), [me.id])
-  useEffect(() => { refreshFollowing() }, [refreshFollowing])
+  const [blocked, setBlocked] = useState(new Set())
+  const refreshFollowing = useCallback(() => api.followingIDs(me.id).then(setFollowing).catch(() => {}), [me.id])
+  useEffect(() => {
+    refreshFollowing()
+    api.blockedIDs(me.id).then(setBlocked).catch(() => {})
+  }, [refreshFollowing, me.id])
 
   const toggleFollow = async (user) => {
     if (following.has(user.id)) await api.unfollow(me.id, user.id)
     else await api.follow(me.id, user.id)
     refreshFollowing()
   }
-  const ctx = { me, following, toggleFollow }
+  const ctx = useMemo(() => ({ me, following, blocked, toggleFollow }), [me, following, blocked]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [page, arg] = route
+  if (route.page === 'batch') return <BatchPage key={route.id} id={route.id} photoID={route.photo} ctx={ctx} />
+
   let body
-  if (page === 'pile' && arg) body = <PilePage id={arg} ctx={ctx} />
-  else if (page === 'friends') body = <Friends ctx={ctx} />
-  else if (page === 'people') body = <People ctx={ctx} />
-  else if (page === 'u' && arg) body = <ProfilePage handle={arg} ctx={ctx} />
+  if (route.page === 'friends') body = <Friends ctx={ctx} />
+  else if (route.page === 'people') body = <People ctx={ctx} />
+  else if (route.page === 'profile') body = <ProfilePage key={route.handle} handle={route.handle} ctx={ctx} />
   else body = <Desk ctx={ctx} />
 
+  const tab = (page, to, label) => (
+    <Link to={to} className={route.page === page ? 'on' : ''} aria-current={route.page === page ? 'page' : undefined}>{label}</Link>
+  )
   return (
     <div className="app">
-      {page !== 'pile' && (
-        <nav className="tabs">
-          <a href="#/" className={!page ? 'on' : ''}>Desk</a>
-          <a href="#/friends" className={page === 'friends' ? 'on' : ''}>Friends</a>
-          <a href="#/people" className={page === 'people' ? 'on' : ''}>Find people</a>
-          <span className="spacer" />
-          <span className="meta">@{me.handle}</span>
-          <button className="link" onClick={api.signOut}>Sign out</button>
+      <header className="topbar">
+        <Link className="brand" to="/app"><img src="/img/icon.png" alt="" width="30" height="30" /><span>Batches</span></Link>
+        <nav className="tabs" aria-label="Sections">
+          {tab('desk', '/app', 'Desk')}
+          {tab('friends', '/app/friends', 'Friends')}
+          {tab('people', '/app/people', 'Find people')}
         </nav>
-      )}
+        <div className="me">
+          <Link to={`/app/u/${me.handle}`} className="me-link" aria-label="Your profile"><Avatar user={me} size={32} /></Link>
+          <Menu label="Account" items={[
+            { label: `@${me.handle}`, onClick: () => go(`/app/u/${me.handle}`) },
+            { label: 'Sign out', onClick: () => api.signOut() },
+          ]} />
+        </div>
+      </header>
       {body}
     </div>
   )
 }
 
 function useLoad(load, deps) {
-  const [state, setState] = useState({ data: null, error: null, loading: true })
-  const reload = useCallback(() => {
-    setState((s) => ({ ...s, loading: true }))
-    load().then((data) => setState({ data, error: null, loading: false }))
-      .catch((error) => setState({ data: null, error, loading: false }))
+  const [state, setState] = useState({ data: undefined, error: null })
+  useEffect(() => {
+    let live = true
+    setState((s) => ({ ...s, error: null }))
+    load().then((data) => live && setState({ data, error: null }))
+      .catch((error) => live && setState({ data: null, error }))
+    return () => { live = false }
   }, deps) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { reload() }, [reload])
-  return { ...state, reload }
+  return state
 }
 
+const visibilityTitle = { private: 'Only me', people: 'Specific people', followers: 'Followers', public: 'Anyone on Batches' }
+
+/** Your own batches, in the order you arranged them in the app, groups and all. */
 function Desk({ ctx }) {
   const { me } = ctx
-  const { data: piles, error, reload } = useLoad(() => api.pilesOf(me.id), [me.id])
-  const [creating, setCreating] = useState(false)
-  const frames = piles?.reduce((n, p) => n + p.photos.length, 0) ?? 0
+  const { data, error } = useLoad(async () => {
+    const [batches, layout] = await Promise.all([api.batchesOf(me.id), api.deskLayout(me.id).catch(() => ({}))])
+    return { batches, layout }
+  }, [me.id])
+  const tiles = useMemo(() => (data ? deskTiles(data.batches, data.layout) : []), [data])
+  const tilted = data?.layout?.tiltedPiles === true
+  const frames = data?.batches.reduce((n, b) => n + b.photos.length, 0) ?? 0
 
   return (
     <main>
-      <header className="deskhead">
-        <div>
-          <h1 className="title big">{me.display_name}</h1>
-          <p className="meta">{piles?.length ?? 0} piles · {frames} frames · {me.follower_count} followers · {me.following_count} following</p>
-        </div>
-        <button className="fab" onClick={() => setCreating(true)} title="New pile">+</button>
-        <Avatar user={me} size={44} />
+      <header className="pagehead">
+        <h1 className="title big">{me.display_name}'s desk</h1>
+        <p className="meta">{counted(data?.batches.length ?? 0, 'batch', 'batches')} · {counted(frames, 'frame')} · {counted(me.follower_count, 'follower')} · {me.following_count} following</p>
       </header>
       {error && <p className="problem">{error.message}</p>}
-      {piles && !piles.length && (
+      {data === undefined && <Spinner />}
+      {data && !data.batches.length && (
         <div className="card empty">
           <h2 className="title">Your desk is clear</h2>
-          <p>Make a pile here, then add photos to it from the Strewn app on your phone.</p>
-          <button className="primary" onClick={() => setCreating(true)}>New pile</button>
+          <p>Make batches in Batches on your iPhone. They show up here, full frame, and anything you share shows up for your friends.</p>
         </div>
       )}
       <div className="grid">
-        {piles?.map((p) => <PileCard key={p.id} pile={p} showVisibility />)}
+        {tiles.map((t) => t.group ? (
+          <section key={t.group.id} className="desk-group">
+            <h2 className="title">{t.group.title || 'Group'}</h2>
+            <div className="grid inner">{t.batches.map((b) => <BatchCard key={b.id} batch={b} tilted={tilted} showVisibility />)}</div>
+          </section>
+        ) : <BatchCard key={t.batch.id} batch={t.batch} tilted={tilted} showVisibility />)}
       </div>
-      {creating && <NewPile me={me} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); reload() }} />}
     </main>
   )
 }
 
+/** DeskLayout.tiles in the app: arranged order, new batches first, groups as one tile. */
+function deskTiles(batches, layout) {
+  const groups = Array.isArray(layout.groups) ? layout.groups : []
+  const grouped = new Set(groups.flatMap((g) => (g.pileIDs ?? []).map((id) => String(id).toLowerCase())))
+  const byKey = new Map()
+  for (const b of batches) if (!grouped.has(b.id)) byKey.set(b.id, { batch: b })
+  for (const g of groups) {
+    const members = (g.pileIDs ?? []).map((id) => batches.find((b) => b.id === String(id).toLowerCase())).filter(Boolean)
+    if (members.length) byKey.set(String(g.id).toLowerCase(), { group: g, batches: members })
+  }
+  const order = (Array.isArray(layout.order) ? layout.order : []).map((k) => String(k).toLowerCase()).filter((k) => byKey.has(k))
+  const known = new Set(order)
+  return [...[...byKey.keys()].filter((k) => !known.has(k)), ...order].map((k) => byKey.get(k))
+}
+
 function Friends({ ctx }) {
-  const { data: piles, error } = useLoad(() => api.feed(ctx.me.id), [ctx.me.id, ctx.following])
+  const { data, error } = useLoad(() => api.feed(ctx.me.id), [ctx.me.id, ctx.following])
+  const batches = data?.filter((b) => !ctx.blocked.has(b.owner_id))
   return (
     <main>
-      <h1 className="title big">Friends</h1>
+      <header className="pagehead"><h1 className="title big">Friends</h1></header>
       {error && <p className="problem">{error.message}</p>}
-      {piles && !piles.length && (
+      {data === undefined && <Spinner />}
+      {batches && !batches.length && (
         <div className="card empty">
           <h2 className="title">Nothing here yet</h2>
-          <p>Follow friends to see the piles they share with followers. Piles shared with you directly show up here too.</p>
-          <a className="primary button" href="#/people">Find people</a>
+          <p>Follow friends to see the batches they share with followers. Batches shared with you directly show up here too.</p>
+          <Link className="button primary" to="/app/people">Find people</Link>
         </div>
       )}
       <div className="feed">
-        {piles?.map((p) => (
-          <div key={p.id} className="card">
-            <a className="byline" href={`#/u/${p.owner?.handle}`}>
-              <Avatar user={p.owner} size={34} />
-              <span>
-                <b>{p.owner?.display_name}</b>
-                <span className="meta">@{p.owner?.handle} · {relative(p.created_at)}</span>
-              </span>
-              {p.visibility === 'people' && <span className="badge">For you</span>}
-            </a>
-            <PileCard pile={p} />
-          </div>
+        {batches?.map((b) => (
+          <article key={b.id} className="card feed-card">
+            <Link className="byline" to={`/app/u/${b.owner?.handle}`}>
+              <Avatar user={b.owner} size={34} />
+              <span className="who"><b>{b.owner?.display_name}</b><span className="meta">@{b.owner?.handle} · {relative(b.created_at)}</span></span>
+              {b.visibility === 'people' && <span className="badge">For you</span>}
+            </Link>
+            <BatchCard batch={b} />
+          </article>
         ))}
       </div>
     </main>
@@ -232,26 +319,27 @@ function Friends({ ctx }) {
 
 function People({ ctx }) {
   const [q, setQ] = useState('')
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState(null)
   useEffect(() => {
     const t = setTimeout(() => api.searchProfiles(q, ctx.me.id).then(setResults).catch(() => setResults([])), 250)
     return () => clearTimeout(t)
   }, [q, ctx.me.id])
+  const shown = results?.filter((u) => !ctx.blocked.has(u.id))
   return (
     <main>
-      <h1 className="title big">Find people</h1>
-      <input placeholder="Name or @handle" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+      <header className="pagehead"><h1 className="title big">Find people</h1></header>
+      <input type="search" placeholder="Name or @handle" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search people" />
       <ul className="people">
-        {results.map((u) => (
+        {shown?.map((u) => (
           <li key={u.id}>
-            <a href={`#/u/${u.handle}`} className="byline">
+            <Link to={`/app/u/${u.handle}`} className="byline">
               <Avatar user={u} size={40} />
-              <span><b>{u.display_name}</b><span className="meta">@{u.handle}</span></span>
-            </a>
+              <span className="who"><b>{u.display_name}</b><span className="meta">@{u.handle}</span></span>
+            </Link>
             <FollowButton user={u} ctx={ctx} />
           </li>
         ))}
-        {!results.length && <li className="meta">No one matches yet.</li>}
+        {shown && !shown.length && <li className="meta">No one matches yet.</li>}
       </ul>
     </main>
   )
@@ -260,271 +348,52 @@ function People({ ctx }) {
 function ProfilePage({ handle, ctx }) {
   const { data, error } = useLoad(async () => {
     const user = await api.profileByHandle(handle)
-    return user ? { user, piles: await api.pilesOf(user.id) } : null
-  }, [handle, ctx.following])
+    if (!user || ctx.blocked.has(user.id)) return { user, batches: [] }
+    return { user, batches: await api.batchesOf(user.id) }
+  }, [handle, ctx.following, ctx.blocked])
   if (error) return <main><p className="problem">{error.message}</p></main>
-  if (!data) return <main>{data === null ? <p>No one is called @{handle}.</p> : <Splash />}</main>
-  const { user, piles } = data
+  if (data === undefined) return <Spinner />
+  if (!data.user) return <main><div className="card empty"><h2 className="title">No one is called @{handle}</h2></div></main>
+  const { user, batches } = data
   const isMe = user.id === ctx.me.id
+  const isBlocked = ctx.blocked.has(user.id)
   return (
     <main>
-      <header className="deskhead">
+      <header className="pagehead profilehead">
         <Avatar user={user} size={64} />
-        <div>
+        <div className="who">
           <h1 className="title big">{user.display_name}</h1>
-          <p className="meta">@{user.handle} · {piles.length} piles you can see · {user.follower_count} followers</p>
+          <p className="meta">@{user.handle} · {counted(user.follower_count, 'follower')} · {user.following_count} following</p>
         </div>
-        <span className="spacer" />
-        {!isMe && <FollowButton user={user} ctx={ctx} />}
+        {!isMe && !isBlocked && <FollowButton user={user} ctx={ctx} />}
       </header>
-      {!piles.length && <p className="meta">Nothing of {user.display_name}'s is shared with you yet.</p>}
-      <div className="grid">{piles.map((p) => <PileCard key={p.id} pile={p} showVisibility={isMe} />)}</div>
+      {isBlocked && <div className="card empty"><p>You've blocked @{user.handle}. You can unblock them in Batches on your iPhone.</p></div>}
+      {!isBlocked && !batches.length && <p className="meta">{isMe ? 'No batches yet.' : `Nothing of ${user.display_name}'s is shared with you yet.`}</p>}
+      <div className="grid">{batches.map((b) => <BatchCard key={b.id} batch={b} showVisibility={isMe} />)}</div>
     </main>
   )
 }
 
 function FollowButton({ user, ctx }) {
   const on = ctx.following.has(user.id)
-  return <button className={on ? 'secondary' : 'primary'} onClick={() => ctx.toggleFollow(user)}>{on ? 'Following' : 'Follow'}</button>
-}
-
-// A pile -----------------------------------------------------------------------------------------
-
-/** The collapsed pile: up to four prints, loosely stacked, cover on top. */
-function PileCard({ pile, showVisibility }) {
-  const stack = useMemo(() => {
-    const cover = pile.photos.find((p) => p.id === pile.cover_photo_id) ?? pile.photos[0]
-    return [...pile.photos.filter((p) => p !== cover).slice(0, 3), cover].filter(Boolean)
-  }, [pile])
-  const vis = api.visibilities.find((v) => v.id === pile.visibility)
-  return (
-    <a className="pile" href={`#/pile/${pile.id}`}>
-      <div className="stack">
-        {stack.length === 0 && <div className="print empty">No photos yet</div>}
-        {stack.map((photo, i) => (
-          <div key={photo.id} className="print" style={{
-            transform: `translate(-50%, -50%) rotate(${tilt(photo.id, i === stack.length - 1)}deg)`,
-            zIndex: i,
-            width: photo.pixel_width >= photo.pixel_height ? '78%' : `${78 * photo.pixel_width / photo.pixel_height}%`,
-          }}>
-            <Photo photo={photo} tier="s" />
-          </div>
-        ))}
-      </div>
-      <h3 className="title">{showVisibility && <span className="vis" title={vis?.title}>{vis?.symbol} </span>}{pile.title}</h3>
-      <p className="meta">{pile.photos.length} frames{pile.shot_on ? ` · ${shortDate(pile.shot_on)}` : ''}{pile.place ? ` · ${pile.place}` : ''}</p>
-    </a>
-  )
-}
-
-function PilePage({ id, ctx }) {
-  const { data: p, error, reload } = useLoad(() => api.pile(id), [id])
-  const [viewing, setViewing] = useState(null)
-  const [sharing, setSharing] = useState(false)
-  if (error) return <main><p className="problem">{error.message}</p></main>
-  if (p === null) return <main><a href="#/">← Desk</a><p>This pile doesn't exist, or it isn't shared with you.</p></main>
-  if (!p) return <Splash />
-  const isOwner = p.owner_id === ctx.me.id
-  const frame = p.frame
-  const vis = api.visibilities.find((v) => v.id === p.visibility)
-
-  return (
-    // Film strips are negatives: always on a dark wall, as in the app.
-    <div className={`wall wall-${frame.kind === 'filmStrip' ? 'dark' : frame.wall}`}>
-      <header className="gallerybar">
-        <button className="round" onClick={() => history.length > 1 ? history.back() : (location.hash = '#/')} title="Back">‹</button>
-        <span className="spacer" />
-        {isOwner && <button className="round" onClick={() => setSharing(true)} title={`Share · ${vis?.title}`}>{vis?.symbol}</button>}
-      </header>
-      <section className="intro">
-        <h1 className="title big">{p.title}</h1>
-        <p className="meta">{[p.shot_on && longDate(p.shot_on), p.place, `${p.photos.length} frames`].filter(Boolean).join(' · ')}</p>
-        {!isOwner && p.owner && <a className="byline" href={`#/u/${p.owner.handle}`}><Avatar user={p.owner} size={24} /><b>{p.owner.display_name}</b></a>}
-      </section>
-      <div className={frame.layout === 'twoColumn' ? 'masonry' : 'column'}>
-        {p.photos.map((photo, i) => (
-          <figure key={photo.id}>
-            <div className={`frame frame-${frame.kind}`} style={{ '--border': `${frame.borderWidth}px` }} onClick={() => setViewing(i)}>
-              <Photo photo={photo} tier="l" />
-              {frame.kind === 'polaroid' && photo.caption && <span className="handwritten">{photo.caption}</span>}
-              {frame.kind === 'filmStrip' && <span className="edge">STREWN 400 <span>▸ {String(i + 1).padStart(2, '0')}A</span></span>}
-            </div>
-            {frame.layout !== 'twoColumn' && (
-              <figcaption className="meta">
-                {String(i + 1).padStart(2, '0')}{photo.exif?.iso ? ` · ISO ${photo.exif.iso}` : ''}{photo.edit ? ' · edited' : ''}
-                {photo.id === p.cover_photo_id && <span className="cover">★ Cover</span>}
-                {isOwner && photo.id !== p.cover_photo_id && (
-                  <button className="link small" onClick={async () => { await api.setCover(p.id, photo.id); reload() }}>Make cover</button>
-                )}
-              </figcaption>
-            )}
-          </figure>
-        ))}
-      </div>
-      {!p.photos.length && <p className="meta center-text">No photos yet. Add them from the Strewn app.</p>}
-      {viewing !== null && <Viewer photos={p.photos} index={viewing} onIndex={setViewing} onClose={() => setViewing(null)} />}
-      {sharing && <ShareSheet pile={p} me={ctx.me} onClose={() => setSharing(false)} onSaved={() => { setSharing(false); reload() }} />}
-    </div>
-  )
-}
-
-function Viewer({ photos, index, onIndex, onClose }) {
-  const photo = photos[index]
-  useEffect(() => {
-    const key = (e) => {
-      if (e.key === 'Escape') onClose()
-      if (e.key === 'ArrowRight' && index < photos.length - 1) onIndex(index + 1)
-      if (e.key === 'ArrowLeft' && index > 0) onIndex(index - 1)
-    }
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [index, photos.length, onClose, onIndex])
-  return (
-    <div className="viewer" onClick={onClose}>
-      <div className="viewer-top">
-        <button className="round dark" onClick={onClose}>✕</button>
-        <span>{index + 1} of {photos.length}</span>
-        <span style={{ width: 40 }} />
-      </div>
-      <div className="viewer-photo" onClick={(e) => e.stopPropagation()}><Photo photo={photo} tier="l" /></div>
-      <div className="viewer-bottom" onClick={(e) => e.stopPropagation()}>
-        {photo.caption && <p>{photo.caption}</p>}
-        <p className="meta light">{photo.pixel_width} × {photo.pixel_height} · uncropped</p>
-        <div className="thumbs">
-          {photos.map((ph, i) => (
-            <button key={ph.id} className={i === index ? 'on' : ''} onClick={() => onIndex(i)}><Photo photo={ph} tier="s" /></button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ShareSheet({ pile, me, onClose, onSaved }) {
-  const [visibility, setVisibility] = useState(pile.visibility)
-  const [people, setPeople] = useState([])
-  const [q, setQ] = useState('')
-  const [matches, setMatches] = useState([])
   const [busy, setBusy] = useState(false)
-  useEffect(() => { api.members(pile.id).then(setPeople) }, [pile.id])
-  useEffect(() => {
-    if (!q.trim()) { setMatches([]); return }
-    const t = setTimeout(() => api.searchProfiles(q, me.id).then(setMatches), 250)
-    return () => clearTimeout(t)
-  }, [q, me.id])
-  const withPeople = visibility === 'people' || visibility === 'followers'
-
   return (
-    <div className="sheet-bg" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
-        <h2 className="title">Share pile</h2>
-        {api.visibilities.map((v) => (
-          <label key={v.id} className={`option ${visibility === v.id ? 'on' : ''}`}>
-            <input type="radio" checked={visibility === v.id} onChange={() => setVisibility(v.id)} />
-            <span className="sym">{v.symbol}</span>
-            <span><b>{v.title}</b><span className="meta">{v.detail}</span></span>
-          </label>
-        ))}
-        {withPeople && (
-          <div className="members">
-            <p className="label">{visibility === 'people' ? 'People' : 'Also share with'}</p>
-            {people.map((u) => (
-              <div key={u.id} className="byline">
-                <Avatar user={u} size={28} /><span><b>{u.display_name}</b> <span className="meta">@{u.handle}</span></span>
-                <button className="link" onClick={() => setPeople(people.filter((x) => x.id !== u.id))}>Remove</button>
-              </div>
-            ))}
-            <input placeholder="Add by name or @handle" value={q} onChange={(e) => setQ(e.target.value)} />
-            {matches.filter((m) => !people.some((x) => x.id === m.id)).map((m) => (
-              <button key={m.id} className="byline match" onClick={() => { setPeople([...people, m]); setQ('') }}>
-                <Avatar user={m} size={28} /><span><b>{m.display_name}</b> <span className="meta">@{m.handle}</span></span><span>＋</span>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="actions">
-          <button className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary" disabled={busy || (visibility === 'people' && !people.length)}
-                  onClick={async () => { setBusy(true); await api.setSharing(pile.id, visibility, people); onSaved() }}>Done</button>
-        </div>
-      </div>
-    </div>
+    <button className={on ? 'secondary' : 'primary'} disabled={busy}
+            onClick={async () => { setBusy(true); try { await ctx.toggleFollow(user) } finally { setBusy(false) } }}>
+      {on ? 'Following' : 'Follow'}
+    </button>
   )
 }
 
-function NewPile({ me, onClose, onCreated }) {
-  const [title, setTitle] = useState('')
-  const [place, setPlace] = useState('')
-  const [problem, setProblem] = useState('')
+function BatchCard({ batch, showVisibility, tilted }) {
   return (
-    <div className="sheet-bg" onClick={onClose}>
-      <form className="sheet" onClick={(e) => e.stopPropagation()} onSubmit={async (e) => {
-        e.preventDefault()
-        try { await api.createPile(me.id, title.trim() || 'Untitled pile', place.trim()); onCreated() } catch (err) { setProblem(err.message) }
-      }}>
-        <h2 className="title">New pile</h2>
-        <input placeholder="Big Sur, one afternoon" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-        <input placeholder="Place (optional)" value={place} onChange={(e) => setPlace(e.target.value)} />
-        <p className="meta">New piles start as Only me. Photos are added from the phone, which uploads small shared copies; RAW files stay on the phone.</p>
-        {problem && <p className="problem">{problem}</p>}
-        <div className="actions">
-          <button type="button" className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary">Create</button>
-        </div>
-      </form>
-    </div>
+    <Link className="batch-card" to={batchURL(batch.id)}>
+      <Pile batch={batch} tilted={tilted} />
+      <h3 className="card-title" style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</h3>
+      <p className="meta">
+        {counted(batch.photos.length, 'frame')}{batch.shot_on ? ` · ${shortDate(batch.shot_on)}` : ''}{batch.place ? ` · ${batch.place}` : ''}
+        {showVisibility ? ` · ${visibilityTitle[batch.visibility] ?? ''}` : ''}
+      </p>
+    </Link>
   )
-}
-
-// Small pieces -----------------------------------------------------------------------------------
-
-/**
- * One photo at its true shape (known before the bytes arrive), never cropped. Shared copies are
- * HEIC: Safari shows them; browsers without HEIC support fall back to an empty frame.
- */
-function Photo({ photo, tier }) {
-  const [failed, setFailed] = useState(false)
-  const url = photo.urls?.[tier] ?? photo.urls?.l ?? photo.urls?.m
-  return (
-    <div className="photo" style={{ aspectRatio: `${photo.pixel_width} / ${photo.pixel_height}` }}>
-      {url && !failed
-        ? <img src={url} alt={photo.caption ?? ''} loading="lazy" onError={() => setFailed(true)} />
-        : <span className="noimg">{url ? 'HEIC — open in Safari' : ''}</span>}
-    </div>
-  )
-}
-
-const hues = [8, 28, 50, 120, 172, 216, 270]
-function Avatar({ user, size }) {
-  const h = hues[hash(user?.id ?? '') % hues.length]
-  return (
-    <span className="avatar" style={{
-      width: size, height: size, fontSize: size * 0.42,
-      background: `linear-gradient(135deg, hsl(${h} 45% 45%), hsl(${h + 28} 55% 62%))`,
-    }}>{user?.display_name?.[0]?.toUpperCase()}</span>
-  )
-}
-
-function PrintStack() {
-  return (
-    <div className="stack hero">
-      {[-8, 6, -2].map((r, i) => <div key={i} className="print" style={{ transform: `translate(-50%, -50%) rotate(${r}deg)`, width: '70%' }}>
-        <div className="photo" style={{ aspectRatio: '3 / 2', background: `linear-gradient(${150 + i * 20}deg, #6aa7e8, #e89a4a)` }} />
-      </div>)}
-    </div>
-  )
-}
-
-function hash(s) {
-  let h = 2166136261
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
-  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16
-  return h >>> 0
-}
-const tilt = (id, isTop) => isTop ? (hash(id) % 5) - 2 : (hash(id) % 17) - 8
-const shortDate = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-const longDate = (d) => new Date(d).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
-function relative(d) {
-  const days = Math.round((Date.now() - new Date(d)) / 86400000)
-  return days < 1 ? 'today' : days === 1 ? 'yesterday' : days < 30 ? `${days} days ago` : shortDate(d)
 }

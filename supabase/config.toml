@@ -162,8 +162,9 @@ site_url = "strewn://auth-callback"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-# The web front end in web/ (npm run dev) signs in through links back to localhost.
-additional_redirect_urls = ["strewn://auth-callback", "http://localhost:5173", "http://localhost:5173/**"]
+# The web viewer (web/, served at batches.space/app and /b/...) signs in through links back to
+# the page you asked from: batches.space in production, localhost while developing.
+additional_redirect_urls = ["strewn://auth-callback", "https://batches.space/**", "http://localhost:5173", "http://localhost:5173/**"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

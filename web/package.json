@@ -1,5 +1,5 @@
 {
-  "name": "strewn-web",
+  "name": "batches-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
+    "libheif-js": "^1.23.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
