@@ -1,14 +1,19 @@
 """Composes App Store screenshots (6.9" iPhone, 1320x2868) from simulator captures.
 
 Usage: python3 tools/compose_app_store_screenshots.py <captures dir> marketing/app-store
-Captures are full-screen simulator PNGs named 1-desk, 2-batch, 3-friends, 4-group, 5-share."""
-import random, sys
+Captures are full-screen 6.9" simulator PNGs named 1-desk, 2-batch, 3-friends, 4-photo, 5-group,
+6-share. Writes one folder per App Store Connect slot, named for its slot and pixel size."""
+import os, random, sys
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 SHOTS, OUT = sys.argv[1], sys.argv[2]
 W, H = 1320, 2868
 SERIF = "/System/Library/Fonts/NewYork.ttf"
 SANS = "/System/Library/Fonts/SFNS.ttf"
+
+# App Store Connect slot -> pixel size. A slot rejects any size it doesn't list.
+SIZES = [("6.9in", (1320, 2868)), ("6.9in", (1290, 2796)), ("6.5in", (1284, 2778)), ("6.5in", (1242, 2688)),
+         ("6.3in", (1206, 2622)), ("6.1in", (1179, 2556))]
 
 LIGHT = dict(bg=(227, 219, 204), ink=(29, 27, 23), sub=(98, 92, 82), line=(0, 0, 0))
 DARK = dict(bg=(38, 36, 31), ink=(242, 236, 225), sub=(176, 168, 154), line=(255, 255, 255))
@@ -17,8 +22,9 @@ SCREENS = [
     ("1-desk", "Your photos,\nin batches", "Every day, trip and night out on one desk.", LIGHT),
     ("2-batch", "Full frame.\nNever cropped.", "White borders, instant film, mats and film strips.", LIGHT),
     ("3-friends", "See what your\nfriends share", "Follow people and get their new batches.", LIGHT),
-    ("4-group", "Everyone's shots,\none batch", "Let friends add their photos to yours.", DARK),
-    ("5-share", "You decide\nwho sees it", "Every batch starts private.", LIGHT),
+    ("4-photo", "Likes and\ncomments", "From the people who were there.", LIGHT),
+    ("5-group", "Everyone's shots,\none batch", "Let friends add their photos to yours.", DARK),
+    ("6-share", "You decide\nwho sees it", "Every batch starts private.", LIGHT),
 ]
 
 
@@ -76,7 +82,15 @@ def compose(name, title, sub, theme, i):
     shadow = shadow.filter(ImageFilter.GaussianBlur(50))
     canvas = Image.alpha_composite(canvas, shadow)
     canvas.paste(phone, (x, top), phone)
-    canvas.convert("RGB").save(f"{OUT}/{i + 1:02d}-{name.split('-', 1)[1]}.png", optimize=True)
+    art = canvas.convert("RGB")
+    for slot, (w, h) in SIZES:
+        # Scale to cover, then trim the few pixels the slightly different shapes leave over.
+        s = max(w / W, h / H)
+        out = art.resize((round(W * s), round(H * s)), Image.Resampling.LANCZOS)
+        x, y = (out.width - w) // 2, (out.height - h) // 2
+        folder = f"{OUT}/{slot}-{w}x{h}"
+        os.makedirs(folder, exist_ok=True)
+        out.crop((x, y, x + w, y + h)).save(f"{folder}/{i + 1:02d}-{name.split('-', 1)[1]}.png", optimize=True)
 
 
 for i, s in enumerate(SCREENS):
