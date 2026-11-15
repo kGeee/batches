@@ -46,6 +46,7 @@ struct GalleryView: View {
     /// Which photo the scroll is nearest, for the rail down the side.
     @State private var railIndex = 0
 
+    @Environment(\.windowLayout) private var window
     private var frame: FrameStyle { collection.frame }
     private var pullDistance: CGFloat { max(pull, headerPull) }
     private var pullProgress: CGFloat { min(1, pullDistance / PullToDismiss.fullPull) }
@@ -69,8 +70,10 @@ struct GalleryView: View {
                             } else if frame.layout == .single {
                                 LazyVStack(spacing: 22) { photoCells(maxPhotoHeight: available) }
                                     .padding(.horizontal, 12)
+                                    .frame(maxWidth: window.isWide ? window.readableWidth : nil)
+                                    .frame(maxWidth: .infinity)
                             } else {
-                                MasonryLayout(columns: 2, spacing: 10) { photoCells(maxPhotoHeight: .infinity) }
+                                MasonryLayout(columns: window.masonryColumns, spacing: 10) { photoCells(maxPhotoHeight: .infinity) }
                                     .padding(.horizontal, 12)
                             }
                         }

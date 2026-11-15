@@ -18,6 +18,7 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: model.auth)
+        .readsWindowLayout()
         .onOpenURL { url in Task { await model.open(url) } }
         .fullScreenCover(item: $model.linkedPile) { LinkedPileView(pile: $0) }
         .alert("Something went wrong", isPresented: Binding(
@@ -70,6 +71,7 @@ private struct SignedInTabs: View {
     /// true to bring the tab back.
     static let showsShoot = false
     @Environment(AppModel.self) private var model
+    @Environment(\.windowLayout) private var layout
     @State private var chrome = AppChrome()
     /// Made the first time you open Shoot, then kept, so the color pipeline isn't rebuilt
     /// and your look and dials survive switching tabs. The session itself stops off-tab.
@@ -91,13 +93,17 @@ private struct SignedInTabs: View {
             page(.friends) { FriendsFeedView() }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !chrome.barHidden && !keyboardUp {
-                FloatingTabBar(tab: $chrome.tab, showsShoot: Self.showsShoot, unseen: model.unseenActivity.count) {
-                    chrome.tab = .desk
-                    showNewPile = true
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            if !layout.usesSideRail && !chrome.barHidden && !keyboardUp {
+                bar(.horizontal).transition(.move(edge: .bottom).combined(with: .opacity))
             }
+        }
+        // With room to spare (an open iPhone Duo) the bar stands down the side instead, and the
+        // keyboard doesn't reach it there. Padding, not a safe area inset: a navigation stack
+        // doesn't pass a leading inset on to its content.
+        .padding(.leading, showsRail ? 84 : 0)
+        .background(DeskMatBackground())
+        .overlay(alignment: .leading) {
+            if showsRail { bar(.vertical).transition(.move(edge: .leading).combined(with: .opacity)) }
         }
         .animation(.snappy(duration: 0.25), value: chrome.barHidden)
         .animation(.snappy(duration: 0.2), value: keyboardUp)
@@ -113,6 +119,15 @@ private struct SignedInTabs: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
     }
 
+    private var showsRail: Bool { layout.usesSideRail && !chrome.barHidden }
+
+    private func bar(_ axis: Axis) -> some View {
+        FloatingTabBar(tab: $chrome.tab, axis: axis, showsShoot: Self.showsShoot, unseen: model.unseenActivity.count) {
+            chrome.tab = .desk
+            showNewPile = true
+        }
+    }
+
     private func page<Content: View>(_ tab: AppChrome.Tab, @ViewBuilder content: () -> Content) -> some View {
         content()
             .opacity(chrome.tab == tab ? 1 : 0)
@@ -125,12 +140,16 @@ private struct SignedInTabs: View {
 /// where a thumb reaches it.
 private struct FloatingTabBar: View {
     @Binding var tab: AppChrome.Tab
+    var axis = Axis.horizontal
     let showsShoot: Bool
     let unseen: Int
     let onNewBatch: () -> Void
 
+    private var vertical: Bool { axis == .vertical }
+
     var body: some View {
-        HStack(spacing: 6) {
+        let stack = vertical ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
+        stack {
             item(.desk, "Desk", "rectangle.stack.fill")
             if showsShoot { item(.shoot, "Shoot", "camera.aperture") }
             Button(action: onNewBatch) {
@@ -143,13 +162,14 @@ private struct FloatingTabBar: View {
             .accessibilityLabel("New batch")
             item(.friends, "Friends", "person.2.fill", badge: unseen)
         }
-        .padding(.horizontal, 10)
-        .frame(height: 64)
+        .padding(vertical ? .vertical : .horizontal, 10)
+        .frame(width: vertical ? 64 : nil, height: vertical ? nil : 64)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
         .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.top, vertical ? 0 : 6)
+        .padding(.bottom, vertical ? 0 : 4)
+        .padding(.leading, vertical ? 10 : 0)
     }
 
     private func item(_ value: AppChrome.Tab, _ title: String, _ symbol: String, badge: Int = 0) -> some View {
@@ -167,7 +187,7 @@ private struct FloatingTabBar: View {
                 Text(title).font(.caption2.weight(.semibold))
             }
             .foregroundStyle(selected ? Color.strewnAccent : Color.secondary)
-            .frame(width: 84, height: 56)
+            .frame(width: vertical ? 64 : 84, height: vertical ? 64 : 56)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

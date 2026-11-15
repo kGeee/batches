@@ -6,6 +6,7 @@ import SwiftUI
 struct DeskView: View {
     @Environment(AppModel.self) private var model
     @Environment(AppChrome.self) private var chrome: AppChrome?
+    @Environment(\.windowLayout) private var window
     @Namespace private var pileSpace
     @State private var openID: UUID?
     @State private var filter = DeskFilter.all
@@ -32,7 +33,7 @@ struct DeskView: View {
 
     private static let tileSpace = "deskTiles"
     // Top-aligned, so a batch with a short title doesn't sit lower than the one beside it.
-    private let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
+    private var columns: [GridItem] { window.grid() }
     private var layout: DeskLayout { model.desk }
     /// Everything on the desk. Moving and grouping work on this, whatever is filtered out of view.
     private var tiles: [DeskTile] { layout.tiles(for: model.myCollections) }
@@ -678,8 +679,9 @@ private struct DeskGroupView: View {
     let onTakeOut: (PhotoCollection) -> Void
     let onUngroup: () -> Void
     let onClose: () -> Void
+    @Environment(\.windowLayout) private var window
 
-    private let columns = [GridItem(.flexible(), spacing: 14, alignment: .top), GridItem(.flexible(), spacing: 14, alignment: .top)]
+    private var columns: [GridItem] { window.grid() }
 
     var body: some View {
         VStack(spacing: 0) {

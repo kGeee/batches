@@ -14,7 +14,8 @@ struct ProfileView: View {
 
     private var shown: User { profile ?? user }
     private var isMe: Bool { user.id == model.me?.id }
-    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    @Environment(\.windowLayout) private var window
+    private var columns: [GridItem] { window.grid(alignment: .center) }
 
     var body: some View {
         ZStack {

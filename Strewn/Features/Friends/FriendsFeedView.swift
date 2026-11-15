@@ -8,6 +8,7 @@ struct FriendsFeedView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(AppChrome.self) private var chrome: AppChrome?
+    @Environment(\.windowLayout) private var window
     @Namespace private var feedSpace
     @State private var section = Section.batches
     @State private var openID: UUID?
@@ -31,10 +32,17 @@ struct FriendsFeedView: View {
                 VStack(spacing: 0) {
                     header
                     ScrollView {
-                        LazyVStack(spacing: 14) {
+                        Group {
                             switch section {
-                            case .batches: batches
-                            case .activity: activity
+                            // Side by side when there's room; one card wide on a phone-sized window.
+                            case .batches:
+                                if model.feed.isEmpty { emptyState } else {
+                                    LazyVGrid(columns: window.feedGrid(), spacing: 14) { batches }
+                                }
+                            case .activity:
+                                LazyVStack(spacing: 14) { activity }
+                                    .frame(maxWidth: window.isWide ? window.readableWidth : nil)
+                                    .frame(maxWidth: .infinity)
                             }
                         }
                         .padding(.horizontal, 14)
@@ -121,7 +129,6 @@ struct FriendsFeedView: View {
 
     @ViewBuilder
     private var batches: some View {
-        if model.feed.isEmpty { emptyState }
         ForEach(model.feed) { collection in
             FeedCard(collection: collection, namespace: feedSpace, isOpen: openID == collection.id,
                      totals: model.batchTotals[collection.id]) {
