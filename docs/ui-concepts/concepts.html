@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Batches — UI concepts</title>
+<style>
+:root{
+  --mat:#e3dbcc; --paper:#fbfaf6; --ink:#1b1a17; --ink2:#6f6a60; --ink3:#9a9488;
+  --accent:#b36b14; --accent-soft:rgba(179,107,20,.12); --card:rgba(251,250,246,.72);
+  --line:rgba(27,26,23,.10);
+  --serif: ui-serif,"New York","Iowan Old Style","Charter",Georgia,serif;
+  --mono: ui-monospace,"SF Mono",Menlo,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:#d9d0bf;-webkit-font-smoothing:antialiased}
+.linen{background-color:var(--mat);background-image:
+  repeating-linear-gradient(0deg,rgba(0,0,0,.022) 0 1px,transparent 1px 3px),
+  repeating-linear-gradient(90deg,rgba(255,255,255,.05) 0 1px,transparent 1px 3px)}
+svg.i{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;vertical-align:-.14em}
+svg.i.f{fill:currentColor;stroke:none}
+
+/* ---------- board ---------- */
+.sheet{width:1400px;height:1000px;padding:44px 52px;display:grid;grid-template-columns:330px 413px 1fr;gap:56px;align-items:start;position:relative}
+.sheet.solo{grid-template-columns:413px 1fr;width:1200px}
+body.linen .sheet{background:none}
+.col h6{font:600 11px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);margin-bottom:14px;display:flex;gap:8px;align-items:center}
+.col h6 b{background:var(--accent);color:#fff;border-radius:99px;padding:4px 9px;letter-spacing:.08em}
+.col h6 s{background:rgba(27,26,23,.12);color:var(--ink2);border-radius:99px;padding:4px 9px;text-decoration:none;font-weight:600}
+.now{width:330px;border-radius:46px 46px 0 0;border:8px solid #111;border-bottom:0;overflow:hidden;height:690px;position:relative;opacity:.92}
+.now img{width:100%;display:block}
+.now:after{content:"";position:absolute;inset:auto 0 0 0;height:120px;background:linear-gradient(transparent,#d9d0bf)}
+.notes{padding-top:38px;max-width:500px}
+.notes .n{font:500 13px var(--mono);color:var(--accent);letter-spacing:.06em}
+.notes h1{font:600 46px/1.05 var(--serif);letter-spacing:-.01em;margin:8px 0 14px}
+.notes p.lede{font:400 17px/1.5 var(--sans);color:var(--ink2);margin-bottom:30px}
+.notes ol{list-style:none;display:grid;gap:20px}
+.notes li{display:grid;grid-template-columns:30px 1fr;gap:14px}
+.notes li i{font:600 13px/30px var(--mono);font-style:normal;width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--paper);text-align:center}
+.notes li strong{display:block;font:600 16px/1.3 var(--sans);margin-bottom:3px}
+.notes li span{font:400 14.5px/1.5 var(--sans);color:var(--ink2)}
+.notes li em{font-style:normal;color:var(--ink);font-weight:500}
+.pin{position:absolute;z-index:20;width:24px;height:24px;border-radius:50%;background:var(--ink);color:var(--paper);font:600 11px/24px var(--mono);text-align:center;box-shadow:0 0 0 3px rgba(251,250,246,.9),0 3px 8px rgba(0,0,0,.3)}
+
+/* ---------- phone ---------- */
+.phone{width:413px;height:872px;border:10px solid #111;border-radius:62px;overflow:hidden;position:relative;box-shadow:0 30px 60px -20px rgba(60,40,10,.45),0 0 0 1px rgba(0,0,0,.4)}
+.scr{position:absolute;inset:0;overflow:hidden}
+.sb{position:absolute;top:0;left:0;right:0;height:54px;z-index:10;display:flex;justify-content:space-between;align-items:center;padding:6px 34px 0 42px;font:600 16.5px var(--sans)}
+.sb:before{content:"";position:absolute;left:50%;top:11px;width:122px;height:35px;margin-left:-61px;border-radius:20px;background:#000}
+.sb .r{display:flex;gap:6px;align-items:center}
+.sb .bars{display:flex;gap:2.5px;align-items:flex-end}.sb .bars u{width:3.2px;background:currentColor;border-radius:1px}
+.sb .bat{width:25px;height:12.5px;border-radius:4px;background:currentColor;position:relative}
+.sb .bat:after{content:"";position:absolute;right:-3px;top:4px;width:1.6px;height:4.5px;border-radius:1px;background:currentColor;opacity:.5}
+.home{position:absolute;bottom:8px;left:50%;width:138px;height:5px;margin-left:-69px;border-radius:3px;background:currentColor;opacity:.85;z-index:30}
+.serif{font-family:var(--serif)} .mono{font-family:var(--mono)}
+.meta{font:400 11.5px/1.4 var(--mono);color:var(--ink2)}
+.chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:99px;font:600 11.5px/1 var(--sans);background:rgba(27,26,23,.07);color:var(--ink2)}
+.chip.a{background:var(--accent-soft);color:var(--accent)}
+.av{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;font:600 12px var(--sans);color:#fff;border:2px solid var(--paper);flex:none}
+.av.k{background:linear-gradient(135deg,#a8862d,#d8c77a)} .av.m{background:linear-gradient(135deg,#9a4fb8,#c873d6)}
+.av.t{background:linear-gradient(135deg,#7f9a3d,#b9cf73)} .av.a{background:linear-gradient(135deg,#c4563c,#e9966c)}
+.av.s{background:linear-gradient(135deg,#3d7f9a,#73bccf)}
+.stack{display:flex}.stack .av+.av{margin-left:-9px}
+.print{background:var(--paper);padding:6px;box-shadow:0 1px 1px rgba(0,0,0,.12),0 8px 18px -6px rgba(40,25,5,.45);position:absolute}
+.print img{display:block;width:100%;height:100%;object-fit:cover}
+.stat{display:inline-flex;align-items:center;gap:4px;font:500 12.5px var(--sans);color:var(--ink2)}
+.stat svg{font-size:15px}
+.stat.on{color:var(--accent)}
+.rb{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:rgba(179,107,20,.11);color:var(--accent);font-size:19px}
+
+/* tab bar */
+.tabbar{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);z-index:25;height:64px;padding:0 10px;border-radius:32px;display:flex;align-items:center;gap:6px;
+  background:rgba(251,250,246,.86);backdrop-filter:blur(18px);box-shadow:0 0 0 1px rgba(27,26,23,.06),0 14px 30px -10px rgba(40,25,5,.45)}
+.tabbar .t{width:84px;display:grid;justify-items:center;gap:3px;font:600 10.5px var(--sans);color:var(--ink3);position:relative}
+.tabbar .t svg{font-size:23px}.tabbar .t.on{color:var(--accent)}
+.tabbar .t .dot{position:absolute;top:-2px;right:24px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--paper)}
+.tabbar .plus{width:52px;height:52px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:25px;box-shadow:0 6px 14px -4px rgba(179,107,20,.7)}
+
+/* ---------- desk ---------- */
+.desk .hd{position:absolute;top:66px;left:22px;right:22px;display:flex;justify-content:space-between;align-items:center}
+.desk .hd h2{font:700 34px/1 var(--serif);letter-spacing:-.01em}
+.desk .act{position:absolute;top:132px;left:18px;right:18px;height:50px;border-radius:16px;background:var(--card);display:flex;align-items:center;gap:10px;padding:0 12px;font:400 13px/1.25 var(--sans);box-shadow:0 0 0 1px rgba(27,26,23,.04)}
+.desk .act b{font-weight:600}
+.desk .chips{position:absolute;top:198px;left:18px;display:flex;gap:7px}
+.desk .chips .chip{height:30px;padding:0 13px;font-size:13px;background:transparent;box-shadow:inset 0 0 0 1px rgba(27,26,23,.14)}
+.desk .chips .chip.on{background:var(--ink);color:var(--paper);box-shadow:none}
+.desk .hero{position:absolute;top:244px;left:0;right:0;height:226px}
+.desk .cap{position:absolute;left:22px;right:22px}
+.desk .cap h3{font:600 20px/1.2 var(--serif)}
+.desk .row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.desk .grid{position:absolute;top:556px;left:0;right:0;display:grid;grid-template-columns:1fr 1fr}
+.desk .cell{position:relative;height:210px}
+.desk .cell .c2{position:absolute;top:122px;left:22px;right:8px}
+.desk .cell h4{font:600 15.5px/1.2 var(--serif)}
+
+/* ---------- batch ---------- */
+.batch{background:#f4f3f1}
+.batch .top{position:absolute;top:60px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:center}
+.aud{height:40px;border-radius:20px;padding:0 13px 0 12px;display:flex;align-items:center;gap:7px;background:rgba(179,107,20,.11);color:var(--accent);font:600 14px var(--sans)}
+.aud svg{font-size:17px}
+.batch .ttl{position:absolute;top:114px;left:22px;right:22px}
+.batch .ttl h2{font:700 30px/1.12 var(--serif);letter-spacing:-.01em}
+.batch .ttl p{font:400 italic 15px/1.4 var(--serif);color:#4a463f;margin-top:8px}
+.batch .who{display:flex;align-items:center;gap:9px;margin-top:12px;font:500 13px var(--sans)}
+.frame{position:absolute;left:20px;right:34px;background:var(--paper);padding:11px;box-shadow:0 1px 1px rgba(0,0,0,.1),0 10px 22px -10px rgba(40,25,5,.4)}
+.frame img{display:block;width:100%}
+.fr{position:absolute;left:22px;right:36px;display:flex;justify-content:space-between;align-items:center}
+.rail{position:absolute;right:10px;top:296px;display:grid;gap:9px;justify-items:end}
+.rail u{display:block;height:2px;width:9px;background:rgba(27,26,23,.25);border-radius:1px;text-decoration:none}
+.rail u.on{width:16px;background:var(--accent);height:3px}
+.dock{position:absolute;left:16px;right:16px;bottom:26px;height:62px;border-radius:31px;z-index:25;display:flex;align-items:center;padding:0 7px;gap:2px;
+  background:rgba(251,250,246,.9);backdrop-filter:blur(18px);box-shadow:0 0 0 1px rgba(27,26,23,.06),0 14px 30px -10px rgba(40,25,5,.45)}
+.dock .pri{height:48px;border-radius:24px;background:var(--accent);color:#fff;font:600 15px var(--sans);display:flex;align-items:center;gap:7px;padding:0 18px 0 14px}
+.dock .pri svg{font-size:19px}
+.dock .o{flex:1;display:grid;justify-items:center;gap:3px;font:600 10.5px var(--sans);color:var(--ink2)}
+.dock .o svg{font-size:21px;color:var(--ink)}
+
+/* ---------- viewer ---------- */
+.viewer{background:#0b0b0a;color:#f3f1ec}
+.viewer .top{position:absolute;top:60px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:center}
+.viewer .rb{background:rgba(255,255,255,.1);color:#f3f1ec}
+.viewer .ph{position:absolute;top:146px;left:0;right:0}
+.viewer .ph img{width:100%;display:block}
+.viewer .info{position:absolute;top:478px;left:20px;right:20px}
+.viewer .by{display:flex;align-items:center;gap:9px;font:500 13.5px var(--sans)}
+.viewer .by .av{border-color:#0b0b0a}
+.viewer .exif{font:400 11.5px var(--mono);color:#8d887d;margin-top:9px;letter-spacing:.02em}
+.viewer .cm{margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.1);font:400 14px/1.45 var(--sans);color:#d9d5cc}
+.viewer .cm b{font-weight:600;color:#fff}
+.viewer .cm a{display:block;color:#8d887d;margin-top:6px;font-size:13px}
+.viewer .acts{position:absolute;bottom:108px;left:20px;right:20px;display:flex;align-items:center;gap:22px;font:600 15px var(--sans)}
+.viewer .acts span{display:flex;align-items:center;gap:7px}.viewer .acts svg{font-size:25px}
+.viewer .acts .on{color:#f2b54d}
+.viewer .acts .sp{margin-left:auto}
+.viewer .strip{position:absolute;bottom:34px;left:0;right:0;display:flex;gap:5px;justify-content:center;align-items:center}
+.viewer .strip img{width:44px;height:44px;object-fit:cover;border-radius:4px;opacity:.45}
+.viewer .strip img.on{width:52px;height:52px;opacity:1;box-shadow:0 0 0 2px #f2b54d}
+
+/* ---------- friends ---------- */
+.friends .hd{position:absolute;top:66px;left:22px;right:18px;display:flex;justify-content:space-between;align-items:center}
+.friends .hd h2{font:700 30px/1 var(--serif)}
+.seg{position:absolute;top:116px;left:18px;right:18px;height:36px;border-radius:11px;background:rgba(27,26,23,.07);display:grid;grid-template-columns:1fr 1fr;padding:3px;font:600 13px var(--sans);color:var(--ink2)}
+.seg span{display:grid;place-items:center;border-radius:8px;grid-auto-flow:column;gap:6px;justify-content:center}
+.seg .on{background:var(--paper);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.seg em{font:600 10.5px var(--sans);font-style:normal;background:var(--accent);color:#fff;border-radius:9px;padding:2px 6px}
+.fcard{position:absolute;left:14px;right:14px;border-radius:22px;background:var(--card);padding:13px 14px 12px;box-shadow:0 0 0 1px rgba(27,26,23,.04)}
+.fcard .h{display:flex;align-items:center;gap:9px}
+.fcard .h .av{width:34px;height:34px;font-size:14px}
+.fcard .h b{display:block;font:600 14px/1.2 var(--sans)}
+.fcard .h .chip{margin-left:auto}
+.fcard .media{display:grid;grid-template-columns:1.9fr 1fr;gap:6px;margin:11px 0 10px;height:122px}
+.fcard .media>div{background:var(--paper);padding:5px;box-shadow:0 1px 1px rgba(0,0,0,.1),0 6px 12px -6px rgba(40,25,5,.4);position:relative;min-height:0}
+.fcard .media img{width:100%;height:100%;object-fit:cover;display:block}
+.fcard .media .side{display:grid;grid-template-rows:1fr 1fr;gap:6px;background:none;padding:0;box-shadow:none}
+.fcard .more{position:absolute;inset:5px;background:rgba(15,12,8,.55);color:#fff;display:grid;place-items:center;font:600 15px var(--sans)}
+.fcard h3{font:600 18px/1.2 var(--serif)}
+.fcard .ft{display:flex;align-items:center;gap:14px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.fcard .ft .lk{margin-left:auto;display:flex;align-items:center;gap:6px;font:400 12px var(--sans);color:var(--ink2)}
+.fcard .ft .av{width:22px;height:22px;font-size:10px}
+.btn{height:32px;border-radius:16px;padding:0 13px;display:inline-flex;align-items:center;gap:6px;font:600 13px var(--sans);background:var(--accent);color:#fff}
+
+/* ---------- share ---------- */
+.share{background:#0b0b0a}
+.share .sb{color:#fff}
+.share .behind{position:absolute;top:56px;left:14px;right:14px;height:30px;border-radius:14px 14px 0 0;background:#8f897d}
+.sheetv{position:absolute;top:66px;left:0;right:0;bottom:0;border-radius:18px 18px 0 0;overflow:hidden}
+.sheetv .phd{display:flex;justify-content:space-between;align-items:center;padding:16px 20px 10px;font:400 16px var(--sans);color:var(--accent)}
+.sheetv .phd b{font:600 17px var(--serif);color:var(--ink)}
+.sheetv .phd strong{font-weight:600}
+.lab{font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin:16px 22px 8px}
+.aud4{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 18px}
+.aud4 div{border-radius:14px;background:var(--card);padding:11px 12px 12px;position:relative;font:400 12px/1.35 var(--sans);color:var(--ink2)}
+.aud4 div svg{font-size:20px;color:var(--accent)}
+.aud4 div b{display:block;font:600 14.5px/1.2 var(--sans);color:var(--ink);margin:6px 0 2px}
+.aud4 div.on{background:var(--paper);box-shadow:0 0 0 2px var(--accent)}
+.aud4 div.on:after{content:"";position:absolute;top:11px;right:11px;width:18px;height:18px;border-radius:50%;background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12.5l4 4 8-9'/%3E%3C/svg%3E") center/12px no-repeat}
+.pcard{margin:0 18px;border-radius:14px;background:var(--card)}
+.pcard .r{display:flex;align-items:center;gap:10px;padding:9px 12px;font:500 14.5px var(--sans);min-height:50px}
+.pcard .r+.r{border-top:1px solid var(--line)}
+.pcard .r small{display:block;font:400 11.5px var(--mono);color:var(--ink2)}
+.pcard .r .chip{margin-left:auto;height:28px;font-size:12px}
+.pcard .r .av{width:32px;height:32px}
+.sum{margin:10px 22px 0;display:flex;align-items:center;gap:9px;font:400 13px/1.35 var(--sans);color:var(--ink2)}
+.sum b{color:var(--ink);font-weight:600}
+.link{margin:0 18px;border-radius:14px;background:var(--paper);display:grid;grid-template-columns:76px 1fr;overflow:hidden;box-shadow:0 0 0 1px rgba(27,26,23,.06)}
+.link img{width:76px;height:76px;object-fit:cover}
+.link .tx{padding:10px 12px;display:grid;align-content:center;gap:2px}
+.link .tx b{font:600 14.5px var(--serif)}
+.lbtn{margin:10px 18px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.lbtn span{height:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;gap:7px;font:600 14.5px var(--sans);background:var(--accent-soft);color:var(--accent)}
+.lbtn span.p{background:var(--accent);color:#fff}
+.foot{margin:14px 22px 0;display:flex;gap:8px;font:400 12px/1.4 var(--sans);color:var(--ink2)}
+.foot svg{font-size:14px;margin-top:2px}
+
+/* overview */
+.overview{width:2360px;height:1080px;padding:50px 60px}
+.overview h1{font:600 44px/1 var(--serif);margin-bottom:6px}
+.overview>p{font:400 16px var(--sans);color:var(--ink2);margin-bottom:34px}
+.overview .rowp{display:flex;gap:44px}
+.overview .rowp>div{display:grid;gap:14px;justify-items:center}.overview .rowp label{font:500 12px var(--mono);color:var(--ink2);letter-spacing:.06em;text-transform:uppercase}
+</style>
+</head>
+<body class="linen">
+
+<!-- ================= DESK ================= -->
+<section class="sheet" id="desk">
+  <div class="col"><h6><s>Now</s> Build 9</h6><div class="now"><img src="img/now-desk.png"></div></div>
+  <div class="col" style="position:relative"><h6><b>Proposed</b></h6>
+    <div class="phone"><div class="scr linen desk" data-screen="desk">
+      <div class="sb"><span>9:41</span><span class="r"><span class="bars"><u style="height:5px"></u><u style="height:7px"></u><u style="height:9.5px"></u><u style="height:12px"></u></span><i data-i="wifi" class="f" style="font-size:17px"></i><span class="bat"></span></span></div>
+      <div class="hd"><div><h2>kevin</h2><div class="meta" style="margin-top:7px">3 batches · 12 frames</div></div>
+        <div style="display:flex;gap:10px;align-items:center"><span class="rb"><i data-i="search"></i></span><span class="av k" style="width:40px;height:40px;font-size:16px">K</span></div></div>
+      <div class="act"><span class="stack"><span class="av m">M</span><span class="av t">T</span></span>
+        <span><b>Maya, Theo</b> and 2 others liked<br><span style="color:var(--ink2)">Big Sur, one afternoon · 3 new comments</span></span>
+        <i data-i="chev" style="margin-left:auto;color:var(--ink3);font-size:16px"></i></div>
+      <div class="chips"><span class="chip on">All</span><span class="chip">Shared</span><span class="chip">Private</span><span class="chip">Groups</span></div>
+      <div class="hero">
+        <div class="print" style="width:210px;height:150px;left:42px;top:26px;transform:rotate(-7deg)"><img src="img/teal.jpg"></div>
+        <div class="print" style="width:210px;height:150px;left:140px;top:44px;transform:rotate(6deg)"><img src="img/grass.jpg"></div>
+        <div class="print" style="width:262px;height:182px;left:66px;top:18px;transform:rotate(-1.2deg);padding:7px"><img src="img/night.jpg"></div>
+      </div>
+      <div class="cap" style="top:472px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><h3>Big Sur, one afternoon</h3>
+          <span style="display:flex;gap:11px"><span class="stat on"><i data-i="heart" class="f"></i>12</span><span class="stat"><i data-i="bubble"></i>3</span></span></div>
+        <div class="row"><span class="chip a"><i data-i="people"></i>Followers</span><span class="meta">5 frames · Oct 17 · Highway 1</span></div>
+      </div>
+      <div class="grid">
+        <div class="cell">
+          <div class="print" style="width:118px;height:78px;left:40px;top:26px;transform:rotate(7deg);padding:4px"><img src="img/mono.jpg"></div>
+          <div class="print" style="width:132px;height:86px;left:22px;top:14px;transform:rotate(-3deg);padding:4px"><img src="img/lake.jpg"></div>
+          <div class="c2"><h4>Joshua Tree overnight</h4><div class="row" style="margin-top:5px"><span class="chip a"><i data-i="two"></i>2 people</span><span class="meta">4 · Oct 4</span></div></div>
+        </div>
+        <div class="cell">
+          <div class="print" style="width:118px;height:78px;left:34px;top:28px;transform:rotate(-6deg);padding:4px"><img src="img/arch.jpg"></div>
+          <div class="print" style="width:132px;height:86px;left:18px;top:14px;transform:rotate(2.5deg);padding:4px"><img src="img/sunset.jpg"></div>
+          <div class="c2" style="left:16px"><h4>Fog over the bay</h4><div class="row" style="margin-top:5px"><span class="chip"><i data-i="lock"></i>Only me</span><span class="meta">3 · Sep 19</span></div></div>
+        </div>
+      </div>
+      <div class="tabbar"><span class="t on"><i data-i="stack" class="f"></i>Desk</span><span class="plus"><i data-i="plus" style="stroke-width:2.4"></i></span><span class="t"><i data-i="two" class="f"></i>Friends<span class="dot"></span></span></div>
+      <div class="home"></div>
+    </div></div>
+    <span class="pin" style="top:170px;left:-12px">1</span><span class="pin" style="top:300px;left:-12px">2</span><span class="pin" style="top:546px;left:-12px">3</span><span class="pin" style="top:806px;left:60px">4</span>
+  </div>
+  <div class="notes"><div class="n">01 / DESK</div><h1>A desk that tells you what happened</h1>
+    <p class="lede">The desk today is a quiet grid. It doesn't say that people reacted, who can see what, or which batch is newest.</p>
+    <ol>
+      <li><i>1</i><div><strong>Activity lands on the desk</strong><span>Likes and comments shipped in build 9 but only show inside a photo. One line at the top says who reacted and opens straight to it.</span></div></li>
+      <li><i>2</i><div><strong>Newest batch gets the room</strong><span>The latest pile is drawn large with its reaction counts. Older ones stay in the two-column grid, so the empty lower half is used.</span></div></li>
+      <li><i>3</i><div><strong>Visibility in words</strong><span>The small people glyphs become <em>Followers</em>, <em>2 people</em>, <em>Only me</em>. Meta fits one line, with no trailing dot wrapping to a second.</span></div></li>
+      <li><i>4</i><div><strong>New batch under the thumb</strong><span>The + moves from the top-right corner into a floating bar. Filters and search are there for when three batches become thirty.</span></div></li>
+    </ol></div>
+</section>
+
+<!-- ================= BATCH ================= -->
+<section class="sheet" id="batch">
+  <div class="col"><h6><s>Now</s> Build 9</h6><div class="now"><img src="img/now-batch.png"></div></div>
+  <div class="col" style="position:relative"><h6><b>Proposed</b></h6>
+    <div class="phone"><div class="scr batch" data-screen="batch">
+      <div class="sb"><span>9:41</span><span class="r"><span class="bars"><u style="height:5px"></u><u style="height:7px"></u><u style="height:9.5px"></u><u style="height:12px"></u></span><i data-i="wifi" class="f" style="font-size:17px"></i><span class="bat"></span></span></div>
+      <div class="top"><span class="rb"><i data-i="back"></i></span>
+        <span style="display:flex;gap:8px"><span class="aud"><i data-i="people"></i>Followers<i data-i="down" style="font-size:12px;stroke-width:2.4"></i></span><span class="rb"><i data-i="dots" class="f"></i></span></span></div>
+      <div class="ttl"><h2>Big Sur, one afternoon</h2>
+        <div class="meta" style="margin-top:8px;font-size:12px">October 17, 2026 · Highway 1 · 5 frames</div>
+        <p>Drove down after work and got an hour of light.</p>
+        <div class="who"><span class="stack"><span class="av k">K</span><span class="av m">M</span><span class="av t">T</span></span>You, Maya and Theo<span class="chip a" style="margin-left:auto"><i data-i="addrect"></i>Group</span></div>
+      </div>
+      <div class="frame" style="top:262px"><img src="img/night.jpg"></div>
+      <div class="fr" style="top:514px"><span style="display:flex;gap:10px;align-items:center"><span class="meta">01</span><span class="stat on" style="font-weight:600"><i data-i="star" class="f"></i>Cover</span></span>
+        <span style="display:flex;gap:14px"><span class="stat on"><i data-i="heart" class="f"></i>8</span><span class="stat"><i data-i="bubble"></i>2</span></span></div>
+      <div class="frame" style="top:550px"><img src="img/teal.jpg"></div>
+      <div class="rail"><u class="on"></u><u></u><u></u><u></u><u></u></div>
+      <div class="dock"><span class="pri"><i data-i="plus" style="stroke-width:2.3"></i>Add photos</span>
+        <span class="o"><i data-i="frame"></i>Frames</span><span class="o"><i data-i="hand"></i>Arrange</span><span class="o"><i data-i="type"></i>Font</span></div>
+      <div class="home"></div>
+    </div></div>
+    <span class="pin" style="top:115px;left:188px">1</span><span class="pin" style="top:265px;left:-12px">2</span><span class="pin" style="top:552px;left:396px">3</span><span class="pin" style="top:806px;left:-12px">4</span>
+  </div>
+  <div class="notes"><div class="n">02 / BATCH</div><h1>Say what the buttons do</h1>
+    <p class="lede">Five identical round icons sit across the top, and you have to long-press a photo to learn it has likes.</p>
+    <ol>
+      <li><i>1</i><div><strong>The share button states the audience</strong><span>Instead of an icon that changes shape with visibility, a chip reads <em>Followers</em>. One tap opens the share sheet.</span></div></li>
+      <li><i>2</i><div><strong>Who's in this batch</strong><span>Group batches show contributors by face, next to the description, in place of a full-width banner.</span></div></li>
+      <li><i>3</i><div><strong>Reactions under every frame</strong><span>Like and comment counts sit beside the frame number. Tap either without opening the full-frame viewer. A rail on the right shows where you are in the batch.</span></div></li>
+      <li><i>4</i><div><strong>Editing tools in a labelled dock</strong><span>Add photos, Frames, Arrange and Font come out of the icon row and the ⋯ menu into reach, with names. Only shown to people who can edit.</span></div></li>
+    </ol></div>
+</section>
+
+<!-- ================= VIEWER ================= -->
+<section class="sheet solo" id="viewer">
+  <div class="col" style="position:relative"><h6><b>Proposed</b></h6>
+    <div class="phone"><div class="scr viewer" data-screen="viewer">
+      <div class="sb"><span>9:41</span><span class="r"><span class="bars"><u style="height:5px"></u><u style="height:7px"></u><u style="height:9.5px"></u><u style="height:12px"></u></span><i data-i="wifi" class="f" style="font-size:17px"></i><span class="bat"></span></span></div>
+      <div class="top"><span class="rb"><i data-i="x"></i></span><span class="mono" style="font-size:13px;color:#b9b4a9">2 of 5</span><span class="rb"><i data-i="dots" class="f"></i></span></div>
+      <div class="ph"><img src="img/teal.jpg"></div>
+      <div class="info">
+        <div class="by"><span class="av m">M</span>Added by Maya<span style="color:#8d887d;font-weight:400">· Oct 17, 4:52 PM</span></div>
+        <div class="exif">35mm · ƒ/2.8 · 1/250 · ISO 100 · RAW</div>
+        <div class="cm"><b>theo_shoots</b> the texture on this one. is that the tide line?<br><b>kevin</b> yep, about twenty minutes before it came back in<a>View all 4 comments</a></div>
+      </div>
+      <div class="acts"><span class="on"><i data-i="heart" class="f"></i>8</span><span><i data-i="bubble"></i>4</span><span class="sp"><i data-i="share"></i></span></div>
+      <div class="strip"><img src="img/night.jpg"><img class="on" src="img/teal.jpg"><img src="img/grass.jpg"><img src="img/lake.jpg"><img src="img/autumn.jpg"></div>
+      <div class="home"></div>
+    </div></div>
+    <span class="pin" style="top:92px;left:396px">1</span><span class="pin" style="top:512px;left:-12px">2</span><span class="pin" style="top:588px;left:-12px">3</span><span class="pin" style="top:744px;left:-12px">4</span>
+  </div>
+  <div class="notes" style="max-width:560px"><div class="n">03 / FULL FRAME</div><h1>Three actions, not six</h1>
+    <p class="lede">The viewer's bar gives Like, Comment, Edit, Make cover, Share and Remove the same weight, with Remove one slot from Share.</p>
+    <ol>
+      <li><i>1</i><div><strong>Owner tools move to ⋯</strong><span>Edit, Make cover, Remove and Report are occasional. They go in the menu, which keeps the destructive one away from the things you tap every time.</span></div></li>
+      <li><i>2</i><div><strong>Credit and exposure</strong><span>Who added the frame and when, plus the EXIF line the app already stores (focal length, aperture, shutter, ISO), set in the film-edge mono.</span></div></li>
+      <li><i>3</i><div><strong>The conversation is visible</strong><span>The latest two comments show under the photo. Today a count is the only hint there's anything to read.</span></div></li>
+      <li><i>4</i><div><strong>Like, comment, share</strong><span>Bigger targets on the left where the thumb rests, with share set apart. The thumbnail strip stays as it is.</span></div></li>
+    </ol></div>
+</section>
+
+<!-- ================= FRIENDS ================= -->
+<section class="sheet" id="friends">
+  <div class="col"><h6><s>Now</s> Build 9</h6><div class="now"><img src="img/now-friends.png"></div></div>
+  <div class="col" style="position:relative"><h6><b>Proposed</b></h6>
+    <div class="phone"><div class="scr linen friends" data-screen="friends">
+      <div class="sb"><span>9:41</span><span class="r"><span class="bars"><u style="height:5px"></u><u style="height:7px"></u><u style="height:9.5px"></u><u style="height:12px"></u></span><i data-i="wifi" class="f" style="font-size:17px"></i><span class="bat"></span></span></div>
+      <div class="hd"><h2>Friends</h2><span class="rb"><i data-i="addperson"></i></span></div>
+      <div class="seg"><span class="on">Batches</span><span>Activity <em>5</em></span></div>
+      <div class="fcard" style="top:162px">
+        <div class="h"><span class="av m">M</span><div><b>Maya R</b><span class="meta">@maya.r · 2 days ago</span></div></div>
+        <div class="media"><div><img src="img/arch.jpg"></div><div class="side"><div><img src="img/teal.jpg"></div><div><img src="img/sunset.jpg"></div></div></div>
+        <h3>Tomales Bay kayak</h3><div class="meta" style="margin-top:3px">3 frames · Nov 1 · Inverness</div>
+        <div class="ft"><span class="stat on"><i data-i="heart" class="f"></i>14</span><span class="stat"><i data-i="bubble"></i>3</span>
+          <span class="lk"><span class="stack"><span class="av t">T</span><span class="av a">A</span></span>Theo and 12 others</span></div>
+      </div>
+      <div class="fcard" style="top:452px">
+        <div class="h"><span class="av t">T</span><div><b>Theo</b><span class="meta">Ana added 2 frames · 3h ago</span></div><span class="chip a"><i data-i="addrect"></i>Group</span></div>
+        <div class="media"><div><img src="img/lake.jpg"></div><div class="side"><div><img src="img/grass.jpg"></div><div><img src="img/autumn.jpg"><span class="more">+4</span></div></div></div>
+        <h3>Mono Lake sunrise</h3><div class="meta" style="margin-top:3px">7 frames · Oct 30 · Lee Vining</div>
+        <div class="ft"><span class="stat"><i data-i="heart"></i>6</span><span class="stat"><i data-i="bubble"></i>1</span><span class="btn" style="margin-left:auto"><i data-i="plus" style="stroke-width:2.4"></i>Add yours</span></div>
+      </div>
+      <div class="tabbar"><span class="t"><i data-i="stack" class="f"></i>Desk</span><span class="plus"><i data-i="plus" style="stroke-width:2.4"></i></span><span class="t on"><i data-i="two" class="f"></i>Friends</span></div>
+      <div class="home"></div>
+    </div></div>
+    <span class="pin" style="top:172px;left:396px">1</span><span class="pin" style="top:290px;left:-12px">2</span><span class="pin" style="top:452px;left:-12px">3</span><span class="pin" style="top:742px;left:396px">4</span>
+  </div>
+  <div class="notes"><div class="n">04 / FRIENDS</div><h1>Two batches a screen, and a reason to tap</h1>
+    <p class="lede">Each feed card is mostly empty linen around one small pile, so a screen shows about one batch and nothing about what's inside.</p>
+    <ol>
+      <li><i>1</i><div><strong>Batches and Activity</strong><span>A second tab collects likes, comments and new followers, which currently have nowhere to live.</span></div></li>
+      <li><i>2</i><div><strong>See the frames</strong><span>The cover plus the next two frames, uncropped edges kept as prints. The tilted pile stays on your own desk, where it means "yours".</span></div></li>
+      <li><i>3</i><div><strong>React from the feed</strong><span>Like and comment counts on every card, with the faces of friends who liked it. The code has a placeholder waiting for exactly this.</span></div></li>
+      <li><i>4</i><div><strong>Group batches invite you in</strong><span>"Ana added 2 frames" brings a batch back to the top, and <em>Add yours</em> is one tap instead of open, then +.</span></div></li>
+    </ol></div>
+</section>
+
+<!-- ================= SHARE ================= -->
+<section class="sheet solo" id="share">
+  <div class="col" style="position:relative"><h6><b>Proposed</b></h6>
+    <div class="phone"><div class="scr share" data-screen="share">
+      <div class="sb"><span>9:41</span><span class="r"><span class="bars"><u style="height:5px"></u><u style="height:7px"></u><u style="height:9.5px"></u><u style="height:12px"></u></span><i data-i="wifi" class="f" style="font-size:17px"></i><span class="bat"></span></span></div>
+      <div class="behind"></div>
+      <div class="sheetv linen">
+        <div class="phd"><span>Cancel</span><b>Share batch</b><strong>Done</strong></div>
+        <div class="lab" style="margin-top:8px">Who can see it</div>
+        <div class="aud4">
+          <div><i data-i="lock"></i><b>Only me</b>Nothing is uploaded</div>
+          <div><i data-i="two"></i><b>Specific people</b>Just who you pick</div>
+          <div class="on"><i data-i="people"></i><b>Followers</b>Plus anyone you add</div>
+          <div><i data-i="globe"></i><b>Anyone</b>Shows on your profile</div>
+        </div>
+        <div class="sum"><span class="stack"><span class="av m">M</span><span class="av t">T</span><span class="av s">S</span></span><span><b>26 people</b> can open this: 24 followers, plus Theo and Ana.</span></div>
+        <div class="lab">Also shared with</div>
+        <div class="pcard">
+          <div class="r"><span class="av t">T</span><div>Theo<small>@theo_shoots</small></div><span class="chip a"><i data-i="addrect"></i>Can add photos<i data-i="down" style="font-size:10px;stroke-width:2.6"></i></span></div>
+          <div class="r"><span class="av a">A</span><div>Ana<small>@ana.b</small></div><span class="chip">Can view<i data-i="down" style="font-size:10px;stroke-width:2.6"></i></span></div>
+          <div class="r" style="color:var(--accent)"><span class="rb" style="width:32px;height:32px;font-size:16px"><i data-i="plus"></i></span>Add by name or @handle</div>
+        </div>
+        <div class="lab">Link</div>
+        <div class="link"><img src="img/night.jpg"><div class="tx"><b>Big Sur, one afternoon</b><span class="meta">5 frames · by kevin</span><span class="meta" style="color:var(--ink3)">batches.space</span></div></div>
+        <div class="lbtn"><span><i data-i="link"></i>Copy link</span><span class="p"><i data-i="share"></i>Send</span></div>
+        <div class="foot"><i data-i="lock"></i><span>Small copies only, without location. RAW files and originals stay on this phone.</span></div>
+      </div>
+      <div class="home" style="color:#1b1a17"></div>
+    </div></div>
+    <span class="pin" style="top:160px;left:-12px">1</span><span class="pin" style="top:372px;left:396px">2</span><span class="pin" style="top:452px;left:396px">3</span><span class="pin" style="top:640px;left:-12px">4</span>
+  </div>
+  <div class="notes" style="max-width:560px"><div class="n">05 / SHARE</div><h1>Show the result of the choice</h1>
+    <p class="lede">The share sheet explains its rules in three paragraphs of small grey text. This version shows the outcome.</p>
+    <ol>
+      <li><i>1</i><div><strong>Four audiences, one glance</strong><span>A 2×2 grid replaces the tall list, so all options and the link fit without scrolling.</span></div></li>
+      <li><i>2</i><div><strong>A live head-count</strong><span>"26 people can open this" updates as you change the audience, which answers the question the footnotes were trying to.</span></div></li>
+      <li><i>3</i><div><strong>Roles per person</strong><span><em>Can add photos</em> or <em>Can view</em> sits on each name. That replaces the paragraph explaining what makes a batch a group batch.</span></div></li>
+      <li><i>4</i><div><strong>Preview the link you're sending</strong><span>The card matches what Messages will show for a batches.space link, with Copy and Send as real buttons.</span></div></li>
+    </ol></div>
+</section>
+
+<section class="overview" id="overview" hidden>
+  <h1>Batches — proposed screens</h1><p>Same linen, paper, serif and amber. Changes are to hierarchy, reach and what each screen tells you.</p>
+  <div class="rowp" id="ovrow"></div>
+</section>
+
+<script>
+const I={
+ heart:'<path d="M12 20.3S3.6 15.4 3.6 9.3A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 8.4 1.7c0 6.1-8.4 11-8.4 11z"/>',
+ bubble:'<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4A2.5 2.5 0 0 1 4 13.5z"/>',
+ plus:'<path d="M12 5v14M5 12h14"/>', back:'<path d="M14.5 5l-7 7 7 7"/>', chev:'<path d="M9 5l7 7-7 7"/>', down:'<path d="M5 9l7 7 7-7"/>',
+ x:'<path d="M6 6l12 12M18 6L6 18"/>',
+ dots:'<circle cx="5.5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="18.5" cy="12" r="1.8"/>',
+ search:'<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+ lock:'<rect x="5.5" y="10.5" width="13" height="10" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>',
+ two:'<circle cx="8.5" cy="8.5" r="3.2"/><path d="M2.5 19c.4-3.4 2.8-5.3 6-5.3s5.600 1.900 6 5.300z"/><circle cx="17" cy="9.500" r="2.600"/><path d="M16.500 14c2.800 0 4.600 1.700 5 4.500h-3.500"/>',
+ people:'<circle cx="12" cy="8" r="3"/><path d="M6.500 19c.4-3.200 2.500-5 5.500-5s5.100 1.800 5.500 5z"/><circle cx="4.800" cy="9.500" r="2.100"/><path d="M1.500 17.500c.3-2.200 1.500-3.500 3.300-3.700"/><circle cx="19.200" cy="9.500" r="2.100"/><path d="M22.500 17.500c-.3-2.200-1.500-3.500-3.300-3.700"/>',
+ globe:'<circle cx="12" cy="12" r="8.500"/><path d="M3.500 12h17M12 3.500c2.600 2.400 3.800 5.200 3.800 8.500s-1.200 6.100-3.800 8.500c-2.600-2.400-3.800-5.200-3.800-8.500s1.200-6.100 3.800-8.500z"/>',
+ stack:'<rect x="4" y="9" width="16" height="11.500" rx="2.500"/><rect x="6" y="5.800" width="12" height="1.700" rx=".85"/><rect x="8" y="3" width="8" height="1.500" rx=".75"/>',
+ star:'<path d="M12 3l2.700 5.700 6.300.8-4.600 4.300 1.200 6.200L12 17l-5.600 3 1.200-6.200L3 9.500l6.300-.8z"/>',
+ share:'<path d="M12 15V3.500M8 7l4-4 4 4M7 11H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1"/>',
+ link:'<path d="M10 14a4 4 0 0 0 5.700 0l3-3a4 4 0 0 0-5.700-5.700l-1 1M14 10a4 4 0 0 0-5.700 0l-3 3a4 4 0 0 0 5.700 5.700l1-1"/>',
+ frame:'<rect x="4" y="4" width="16" height="16" rx="2.500"/><rect x="8" y="8" width="8" height="8" rx=".8"/>',
+ hand:'<path d="M4 17c3-1 4-6 7-6s2 5 5 4 3-7 4-9"/><path d="M4 21h16"/>',
+ type:'<path d="M5 19l5-14h1l5 14M7 14h7M17.500 19v-6.500a2.500 2.500 0 0 1 5 0"/>',
+ addrect:'<rect x="3.500" y="7" width="13" height="11" rx="2"/><path d="M7.500 7V6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2M10 10v5M7.500 12.500h5"/>',
+ addperson:'<circle cx="10" cy="8" r="3.500"/><path d="M3.500 20c.5-3.800 3-6 6.500-6 1.200 0 2.300.3 3.200.8M18 14v6M15 17h6"/>',
+ wifi:'<path d="M12 18.500l2.300-2.800a3.400 3.400 0 0 0-4.600 0zM7.400 13l1.500 1.800a4.900 4.900 0 0 1 6.200 0l1.500-1.800a7.300 7.300 0 0 0-9.200 0zM4 9l1.500 1.800a10 10 0 0 1 13 0L20 9A12.300 12.300 0 0 0 4 9z"/>'
+};
+document.querySelectorAll('i[data-i]').forEach(e=>{
+  const s=document.createElementNS('http://www.w3.org/2000/svg','svg');
+  s.setAttribute('viewBox','0 0 24 24'); s.setAttribute('class','i '+(e.className||''));
+  if(e.getAttribute('style')) s.setAttribute('style',e.getAttribute('style'));
+  s.innerHTML=I[e.dataset.i]||''; e.replaceWith(s);
+});
+const only=new URLSearchParams(location.search).get('only');
+if(only==='overview'){
+  const row=document.getElementById('ovrow');
+  [['desk','Desk'],['batch','Batch'],['viewer','Full frame'],['friends','Friends'],['share','Share']].forEach(([id,name])=>{
+    const d=document.createElement('div'); d.appendChild(document.querySelector('#'+id+' .phone').cloneNode(true)); const l=document.createElement('label');l.textContent=name;d.appendChild(l); row.appendChild(d);
+  });
+  document.querySelectorAll('.sheet').forEach(s=>s.remove()); document.getElementById('overview').hidden=false;
+}else if(only){ document.querySelectorAll('.sheet').forEach(s=>{ if(s.id!==only) s.remove(); }); }
+</script>
+</body>
+</html>
