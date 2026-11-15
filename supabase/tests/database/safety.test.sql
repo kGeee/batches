@@ -5,7 +5,7 @@
 -- followers batch, maya's is shared with kevin, and maya added a photo to jules's public batch.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(26);
 insert into auth.users (id) values ('00000000-0000-0000-0000-0000000000a1'),('00000000-0000-0000-0000-0000000000b1'),('00000000-0000-0000-0000-0000000000c1');
 create function pg_temp.as_user(u text) returns void language sql as $$ select set_config('request.jwt.claim.sub', u, true) $$;
 create function pg_temp.try(q text) returns text language plpgsql as $$
@@ -52,6 +52,9 @@ select is(pg_temp.try($$delete from blocks$$), '0 rows', 'maya can''t remove kev
 -- reports
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
 select is(pg_temp.try($$insert into reports (photo_id, reason) values ('40000000-0000-0000-0000-0000000000cb','spam')$$), 'ok', 'jules reports a photo');
+select is(pg_temp.try($$insert into reports (reason) values ('copyright')$$), 'refused', 'a report has to name a person, a batch, a photo or a comment');
+select is(pg_temp.try($$insert into reports (reported_user_id, reason) values ('00000000-0000-0000-0000-0000000000b1','other')$$), 'ok', 'jules reports maya');
+select is(pg_temp.try($$insert into reports (collection_id, reason) values ('30000000-0000-0000-0000-00000000000b','violence')$$), 'ok', 'jules reports maya''s batch');
 select is(pg_temp.try($$select * from reports$$), 'refused', 'jules can''t read reports');
 reset role;
 select is((select reporter_id::text || ' ' || reported_user_id::text || ' ' || (context->>'batch_title') from reports where photo_id = '40000000-0000-0000-0000-0000000000cb'),
@@ -65,5 +68,9 @@ select is((select (select count(*) from auth.users where id = '00000000-0000-000
                + (select count(*) from collections where owner_id = '00000000-0000-0000-0000-0000000000b1')
                + (select count(*) from photos where added_by = '00000000-0000-0000-0000-0000000000b1' or id = '40000000-0000-0000-0000-00000000000b'))::text,
           '0', 'her user, batches and the photo she added to jules''s batch are gone');
+select is((select (reported_user_id is null)::text || ' ' || (context->>'reported_handle') from reports where reason = 'other'),
+          'true t_maya', 'the report of maya survives her account being deleted');
+select is((select (collection_id is null and reported_user_id is null)::text || ' ' || (context->>'batch_title') from reports where reason = 'violence'),
+          'true Maya followers', 'the report of her batch survives it being deleted with her account');
 select * from finish();
 rollback;
