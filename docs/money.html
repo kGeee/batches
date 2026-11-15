@@ -1,0 +1,133 @@
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); }
+  footer { color: var(--muted); font-size: 14px; margin-top: 32px; }
+  @media print {
+    body { background: #fff; }
+    .card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="meta">Batches · monetization plan · revised November 15, 2026</p>
+    <h1>Sell the finished batch, not photo collection.</h1>
+    <p class="lede">The plan has been revised twice. The first version listed every possible revenue stream. The second narrowed it to selling photo collection to organizers. This version keeps the narrowing and the demand testing, but changes what gets sold.</p>
+  </header>
+  <section class="card thesis">
+    <p>Batches is the most beautiful way to keep and show a shared moment. People pay for the finished thing: prints, a book, or a page worth sending around. Originals stay on your phone by default.</p>
+  </section>
+  <section class="card">
+    <h2>What was wrong with the previous version</h2>
+    <div class="issue">
+      <span class="tag warn">Wrong thing to sell</span>
+      <h3>It charged for the commodity feature</h3>
+      <p>Google Photos shared albums already collect photos from any device and offer full-quality downloads for free. iCloud Shared Albums are free too. A $9.99 pass for collection asks people to pay for something they already have.</p>
+      <p>What only Batches does is the presentation: never-cropped photos, frame styles (instant film, film strip, gallery mat), piles of prints on a desk, and freehand boards with the owner's fonts and backgrounds. Keep the styling free, and charge for turning a batch into something people keep or send.</p>
+    </div>
+    <div class="issue">
+      <span class="tag warn">Breaks a promise</span>
+      <h3>Full-resolution collection conflicts with the privacy promise</h3>
+      <p>The site says "Your originals stay on your phone" and "Only screen-sized copies of photos you share are uploaded, with location removed." The storage plan and privacy policy are built on that. Collecting full-resolution photos would need contributor consent, policy and App Store privacy-label changes, and a decision about location data. It shouldn't be the first paid feature.</p>
+    </div>
+    <div class="issue">
+      <span class="tag warn">Underestimated</span>
+      <h3>Browser uploads and pages without sign-in are a big project</h3>
+      <p>Signed-out visitors can read nothing today, by database rule, and the web app can only view batches. Anonymous uploads and public pages would need:</p>
+      <ul>
+        <li>New database rules for signed-out access</li>
+        <li>Abuse protection and rate limits</li>
+        <li>Moderation of public content, including legal reporting obligations</li>
+        <li>Browser uploads with HEIC and JPEG conversion</li>
+        <li>JPEG copies for public web pages</li>
+      </ul>
+    </div>
+    <div class="issue">
+      <span class="tag warn">Can't be measured yet</span>
+      <h3>The success thresholds were invented</h3>
+      <p>The app is still getting ready for external TestFlight. Targets like "20% of batches reach 3+ contributors" or "3–5% buy" can't be measured with dozens or a few hundred testers. The first stage should judge repeat use and talk to people, not chase conversion rates.</p>
+    </div>
+    <div class="issue">
+      <span class="tag warn">Won't convert</span>
+      <h3>A 10-contributor cap rarely bites</h3>
+      <p>The storage plan itself says friend groups stay under it. A limit most people never reach won't make many of them pay.</p>
+    </div>
+    <div class="issue">
+      <span class="tag warn">Missing</span>
+      <h3>Apple's payment rules</h3>
+      <p>A digital pass sold in the iPhone app generally has to use Apple's in-app purchase. A web checkout for organizers on desktop may make sense, but check the current App Store rules on links and outside purchases first. Physical prints aren't subject to the in-app purchase requirement, which is one more reason to look at them early.</p>
+    </div>
+  </section>
+  <section class="card">
+    <h2>The plan</h2>
+    <div class="phases">
+      <div class="phase">
+        <span class="tag phase">Phase 0 · now</span>
+        <h3>Find out why people come back</h3>
+        <p>Launch external TestFlight free and learn:</p>
+        <ul>
+          <li>Do people open friends' batches more than once?</li>
+          <li>Do they send links to people outside the app?</li>
+          <li>After a trip, what do they do with the photos: post to Instagram, make a book, or forget them?</li>
+          <li>Do they screenshot boards or film-roll views? That would mean the presentation is what they value.</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <span class="tag phase">Phase 1</span>
+        <h3>Test interest before building anything</h3>
+        <p>Add three buttons inside a batch that lead to a short "coming soon, want early access?" screen:</p>
+        <ul>
+          <li><b>Order prints of this batch</b></li>
+          <li><b>Make a book from this board</b></li>
+          <li><b>Get a public page for this batch</b></li>
+        </ul>
+        <p>Count taps per active batch owner. Fulfill the first print orders by hand if needed. It's cheap, and it shows which option deserves to be built.</p>
+      </div>
+      <div class="phase">
+        <span class="tag phase">Phase 2</span>
+        <h3>Build the option that wins</h3>
+        <ul>
+          <li><b>Prints or zines.</b> Charge per order, aim for at least a 30% margin, and fulfill through a print-on-demand provider. Render the frame, caption and font on the phone from the local original, so the print matches what the owner designed and originals never become cloud copies.</li>
+          <li><b>Public batch page.</b> A one-time $4.99–$9.99 purchase or part of Plus, with JPEG web copies, a preview image for link sharing, and an optional PIN. Build it only if many people tap that button, because it brings the moderation work above.</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <span class="tag phase">Phase 3</span>
+        <h3>Batches Plus, only after repeat use</h3>
+        <p>Offer a subscription once organizers make several batches a year. Combine whichever feature won with print discounts and backup or export. Make full-resolution sharing an opt-in setting for each contributor, never the default.</p>
+      </div>
+      <div class="phase">
+        <span class="tag phase">Separately</span>
+        <h3>Keep the camera out of this plan</h3>
+        <p>The hidden RAW camera and film-look pipeline still need tuning on a real iPhone and compete in a crowded category. Decide on them as their own product, so they don't complicate the social app's pricing.</p>
+      </div>
+    </div>
+  </section>
+  <section class="card">
+    <h2>Free and paid at a glance</h2>
+    <table>
+      <thead><tr><th>Capability</th><th>Free</th><th>Paid</th></tr></thead>
+      <tbody>
+        <tr><td>Create, share and view batches</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Frames, fonts, backgrounds, boards</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Group batches, likes and comments</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Prints, zines and books</td><td>—</td><td>Per order</td></tr>
+        <tr><td>Public page with link preview and PIN</td><td>—</td><td>One-time or Plus</td></tr>
+        <tr><td>Full-resolution sharing</td><td>—</td><td>Plus, opt-in per contributor</td></tr>
+        <tr><td>Backup and export</td><td>—</td><td>Plus</td></tr>
+      </tbody>
+    </table>
+    <p class="meta" style="margin-top: 12px">Prices are starting guesses to check against the Phase 1 results.</p>
+  </section>
+  <section class="card">
+    <h2>What stays the same</h2>
+    <ul>
+      <li><span class="tag good">Kept</span> No ads, no tracking, no analytics.</li>
+      <li><span class="tag good">Kept</span> Viewers and contributors never pay.</li>
+      <li><span class="tag good">Kept</span> Validate demand before building. Costs stay low (about $0.01–$0.04 per active user a month, per <code>docs/storage-plan.md</code>), so there's no rush to charge.</li>
+    </ul>
+  </section>
+  <footer>Batches · Kevin George</footer>
+</main>
+</body>
+</html>
