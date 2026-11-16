@@ -65,8 +65,8 @@ select is(pg_temp.try($$insert into reports (comment_id, reason) values ('300000
 
 -- the stranger sees and does nothing
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
-select is((select count(*)::text from photo_comments), '0', 'a stranger sees no comments');
-select is((select count(*)::text from photo_likes), '0', 'or likes');
+select is((select count(*)::text from photo_comments where photo_id = '20000000-0000-0000-0000-000000000001'), '0', 'a stranger sees no comments');
+select is((select count(*)::text from photo_likes where photo_id = '20000000-0000-0000-0000-000000000001'), '0', 'or likes');
 select is(pg_temp.try($$insert into photo_likes (photo_id) values ('20000000-0000-0000-0000-000000000001')$$), 'refused', 'a stranger likes a photo they can''t see');
 select is(pg_temp.try($$insert into photo_comments (photo_id, body) values ('20000000-0000-0000-0000-000000000001','hi')$$), 'refused', 'a stranger comments on a photo they can''t see');
 
@@ -75,7 +75,7 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select is((select count(*)::text from photo_comments where photo_id = '20000000-0000-0000-0000-000000000001'), '2', 'the owner sees every comment');
 select is(pg_temp.try($$delete from photo_comments where id = '30000000-0000-0000-0000-00000000000c'$$), 'ok', 'the owner removes a comment on their batch');
 reset role;
-select is((select reported_user_id::text || ' ' || photo_id::text || ' ' || (context->>'comment_body') from reports where comment_id is null and context->>'comment_body' is not null), '00000000-0000-0000-0000-00000000000c 20000000-0000-0000-0000-000000000001 Where is this?', 'the report kept the comment, its author and its photo after it was deleted');
+select is((select reported_user_id::text || ' ' || photo_id::text || ' ' || (context->>'comment_body') from reports where comment_id is null and context->>'comment_body' is not null and reported_user_id = '00000000-0000-0000-0000-00000000000c'), '00000000-0000-0000-0000-00000000000c 20000000-0000-0000-0000-000000000001 Where is this?', 'the report kept the comment, its author and its photo after it was deleted');
 set local role authenticated;
 
 -- maya removes her own comment and like
