@@ -137,6 +137,98 @@ async function finish(rows) {
   return rows
 }
 
+/** Batches by id, in the order asked. Ones no longer shared with you are left out. */
+export async function batchesByIDs(ids) {
+  const wanted = ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id))
+  if (!wanted.length) return []
+  const rows = await finish(check(await supabase.from('collections').select(batchSelect).in('id', wanted)))
+  const byID = new Map(rows.map((b) => [b.id, b]))
+  return wanted.map((id) => byID.get(id)).filter(Boolean)
+}
+
+export async function photosByIDs(ids) {
+  if (!ids.length) return []
+  return check(await supabase.from('photos').select().in('id', ids))
+}
+
+// Books ------------------------------------------------------------------------------------------
+
+const bookColumns = 'id, title, format, doc, revision, status, created_at, updated_at'
+
+export async function books() {
+  return check(await supabase.from('books').select(bookColumns).order('updated_at', { ascending: false }))
+}
+
+export async function book(id) {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null
+  return check(await supabase.from('books').select(bookColumns).eq('id', id).maybeSingle())
+}
+
+export async function createBook({ title, format, doc, batchIDs }) {
+  const id = crypto.randomUUID()
+  check(await supabase.from('books').insert({ id, title, format, doc }))
+  await setBookBatches(id, batchIDs)
+  return id
+}
+
+/** Thrown when someone saved the book elsewhere since this copy was loaded. */
+export class BookConflict extends Error {}
+
+/** Saves only over the revision this copy was loaded at, and returns the new one. */
+export async function saveBook(id, { title, doc }, revision) {
+  const row = check(await supabase.from('books').update({ title, doc }).eq('id', id).eq('revision', revision).select('revision').maybeSingle())
+  if (!row) throw new BookConflict('This book was changed somewhere else.')
+  return row.revision
+}
+
+/** Saves whatever revision is there now: for "keep mine" after a conflict. */
+export async function overwriteBook(id, { title, doc }) {
+  return check(await supabase.from('books').update({ title, doc }).eq('id', id).select('revision').single()).revision
+}
+
+export async function deleteBook(id) {
+  check(await supabase.from('books').delete().eq('id', id))
+}
+
+/** Which batches a book draws on, in chapter order. */
+export async function setBookBatches(bookID, batchIDs) {
+  const ids = [...new Set(batchIDs)]
+  const current = check(await supabase.from('book_batches').select('collection_id, position').eq('book_id', bookID))
+  const gone = current.map((r) => r.collection_id).filter((id) => !ids.includes(id))
+  if (gone.length) check(await supabase.from('book_batches').delete().eq('book_id', bookID).in('collection_id', gone))
+  const have = new Map(current.map((r) => [r.collection_id, r.position]))
+  const fresh = ids.map((id, position) => ({ book_id: bookID, collection_id: id, position })).filter((r) => !have.has(r.collection_id))
+  if (fresh.length) check(await supabase.from('book_batches').insert(fresh))
+  for (const [position, id] of ids.entries()) {
+    if (have.has(id) && have.get(id) !== position) check(await supabase.from('book_batches').update({ position }).eq('book_id', bookID).eq('collection_id', id))
+  }
+}
+
+export async function bookBatchIDs(bookID) {
+  return check(await supabase.from('book_batches').select('collection_id').eq('book_id', bookID).order('position')).map((r) => r.collection_id)
+}
+
+/** Print files go in the private prints bucket under your own folder. */
+export async function uploadPrint(path, blob) {
+  check(await supabase.storage.from('prints').upload(path, blob, { contentType: 'application/pdf', upsert: true }))
+}
+
+export async function printLink(path) {
+  return check(await supabase.storage.from('prints').createSignedUrl(path, 3600)).signedUrl
+}
+
+export async function orderBook({ bookID, revision, quantity, interiorPath, coverPath, pageCount }) {
+  const id = crypto.randomUUID()
+  check(await supabase.from('book_orders').insert({
+    id, book_id: bookID, book_revision: revision, quantity, interior_path: interiorPath, cover_path: coverPath, page_count: pageCount,
+  }))
+  return id
+}
+
+export async function ordersOf(bookID) {
+  return check(await supabase.from('book_orders').select().eq('book_id', bookID).order('created_at', { ascending: false }))
+}
+
 // Likes and comments on photos -------------------------------------------------------------------
 
 /** Like and comment counts by photo. Row level security leaves out people across a block. */

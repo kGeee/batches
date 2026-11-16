@@ -3,6 +3,8 @@ import * as api from './api.js'
 import { clearPhotos } from './photos.js'
 import { fontFamily } from './look.js'
 import BatchPage from './Batch.jsx'
+import { BooksPage, NewBookPage, PickableBatch } from './book/Books.jsx'
+import { BookScreen } from './book/Book.jsx'
 import { Avatar, Link, Menu, Pile, Spinner, appURL, batchURL, counted, go, parseRoute, relative, shortDate, useLocation } from './ui.jsx'
 
 export default function App() {
@@ -188,9 +190,12 @@ function Signed({ me, route }) {
   const ctx = useMemo(() => ({ me, following, blocked, toggleFollow }), [me, following, blocked]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (route.page === 'batch') return <BatchPage key={route.id} id={route.id} photoID={route.photo} ctx={ctx} />
+  if (route.page === 'book') return <BookScreen key={route.id} id={route.id} view={route.view} ctx={ctx} />
 
   let body
-  if (route.page === 'friends') body = <Friends ctx={ctx} />
+  if (route.page === 'books') body = <BooksPage ctx={ctx} />
+  else if (route.page === 'newbook') body = <NewBookPage key={route.picked.join()} picked={route.picked} ctx={ctx} />
+  else if (route.page === 'friends') body = <Friends ctx={ctx} />
   else if (route.page === 'people') body = <People ctx={ctx} />
   else if (route.page === 'profile') body = <ProfilePage key={route.handle} handle={route.handle} ctx={ctx} />
   else body = <Desk ctx={ctx} />
@@ -204,6 +209,7 @@ function Signed({ me, route }) {
         <Link className="brand" to="/app"><img src="/img/icon.png" alt="" width="30" height="30" /><span>Batches</span></Link>
         <nav className="tabs" aria-label="Sections">
           {tab('desk', '/app', 'Desk')}
+          {tab(route.page === 'newbook' ? 'newbook' : 'books', '/app/books', 'Books')}
           {tab('friends', '/app/friends', 'Friends')}
           {tab('people', '/app/people', 'Find people')}
         </nav>
@@ -244,12 +250,20 @@ function Desk({ ctx }) {
   const tiles = useMemo(() => (data ? deskTiles(data.batches, data.layout) : []), [data])
   const tilted = data?.layout?.tiltedPiles === true
   const frames = data?.batches.reduce((n, b) => n + b.photos.length, 0) ?? 0
+  // Picking batches for a book, right on the desk.
+  const [picking, setPicking] = useState(null)
+  const card = (b) => picking
+    ? <PickableBatch key={b.id} batch={b} on={picking.includes(b.id)} onToggle={() => setPicking((p) => (p.includes(b.id) ? p.filter((x) => x !== b.id) : [...p, b.id]))} />
+    : <BatchCard key={b.id} batch={b} tilted={tilted} showVisibility />
 
   return (
     <main>
-      <header className="pagehead">
-        <h1 className="title big">{me.display_name}'s desk</h1>
-        <p className="meta">{counted(data?.batches.length ?? 0, 'batch', 'batches')} · {counted(frames, 'frame')} · {counted(me.follower_count, 'follower')} · {me.following_count} following</p>
+      <header className="pagehead profilehead">
+        <div className="who">
+          <h1 className="title big">{me.display_name}'s desk</h1>
+          <p className="meta">{counted(data?.batches.length ?? 0, 'batch', 'batches')} · {counted(frames, 'frame')} · {counted(me.follower_count, 'follower')} · {me.following_count} following</p>
+        </div>
+        {data?.batches.some((b) => b.photos.length) && !picking && <button className="secondary" onClick={() => setPicking([])}>Make a book</button>}
       </header>
       {error && <p className="problem">{error.message}</p>}
       {data === undefined && <Spinner />}
@@ -263,10 +277,17 @@ function Desk({ ctx }) {
         {tiles.map((t) => t.group ? (
           <section key={t.group.id} className="desk-group">
             <h2 className="title">{t.group.title || 'Group'}</h2>
-            <div className="grid inner">{t.batches.map((b) => <BatchCard key={b.id} batch={b} tilted={tilted} showVisibility />)}</div>
+            <div className="grid inner">{t.batches.map(card)}</div>
           </section>
-        ) : <BatchCard key={t.batch.id} batch={t.batch} tilted={tilted} showVisibility />)}
+        ) : card(t.batch))}
       </div>
+      {picking && (
+        <div className="pickbar">
+          <span className="meta">{picking.length ? `${counted(picking.length, 'batch', 'batches')} for a book` : 'Pick the batches for a book'}</span>
+          <button className="secondary" onClick={() => setPicking(null)}>Cancel</button>
+          <button className="primary" disabled={!picking.length} onClick={() => go(`/app/books/new?b=${picking.join(',')}`)}>Continue</button>
+        </div>
+      )}
     </main>
   )
 }

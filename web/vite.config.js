@@ -11,7 +11,7 @@ const site = path.resolve(__dirname, '../site')
 function likeVercel() {
   const handle = (req, _res, next) => {
     const url = req.url ?? '/'
-    if (/^\/b\/[^/?]+\/?(\?|$)/.test(url) || /^\/app\/?(friends|people|u\/[^/?]+)?\/?(\?|$)/.test(url)) req.url = '/app/' + (url.split('?')[1] ? '?' + url.split('?')[1] : '')
+    if (/^\/b\/[^/?]+\/?(\?|$)/.test(url) || /^\/app\/?(friends|people|u\/[^/?]+|books(\/[^/?]+){0,2})?\/?(\?|$)/.test(url)) req.url = '/app/' + (url.split('?')[1] ? '?' + url.split('?')[1] : '')
     else if (/^\/(img\/|favicon\.png|apple-touch-icon\.png)/.test(url)) {
       const file = path.join(site, url.split('?')[0])
       if (file.startsWith(site) && fs.existsSync(file)) return fs.createReadStream(file).pipe(_res)

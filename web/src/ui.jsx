@@ -4,6 +4,7 @@ import { captionFamily, insets, pilePlacement, pileStack } from './look.js'
 
 // Routes -----------------------------------------------------------------------------------------
 // /app · /app/friends · /app/people · /app/u/<handle> · /b/<batch>[?photo=<photo>]
+// /app/books · /app/books/new[?b=<batch>,…] · /app/books/<book>[/pages|/cover|/order|/preview]
 // /b/ links are the same ones the iPhone app shares, so a batch's address works in both.
 
 export function parseRoute(pathname, search) {
@@ -14,6 +15,11 @@ export function parseRoute(pathname, search) {
   if (rest[0] === 'friends') return { page: 'friends' }
   if (rest[0] === 'people') return { page: 'people' }
   if (rest[0] === 'u' && rest[1]) return { page: 'profile', handle: decodeURIComponent(rest[1]) }
+  if (rest[0] === 'books') {
+    if (!rest[1]) return { page: 'books' }
+    if (rest[1] === 'new') return { page: 'newbook', picked: (new URLSearchParams(search).get('b') ?? '').split(',').filter(Boolean) }
+    return { page: 'book', id: rest[1].toLowerCase(), view: ['pages', 'cover', 'order', 'preview'].includes(rest[2]) ? rest[2] : 'edit' }
+  }
   return { page: 'desk' }
 }
 
@@ -159,6 +165,14 @@ const paths = {
   star: <path d="M12 4l2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z" />,
   phone: <path d="M8 3h8a1 1 0 011 1v16a1 1 0 01-1 1H8a1 1 0 01-1-1V4a1 1 0 011-1zm3 15h2" />,
   send: <path d="M12 19V5m-6 6l6-6 6 6" />,
+  forward: <path d="M9 5l7 7-7 7" />,
+  up: <path d="M6 15l6-6 6 6" />,
+  down: <path d="M6 9l6 6 6-6" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  undo: <path d="M9 7L5 11l4 4M5 11h9a5 5 0 010 10h-2" />,
+  redo: <path d="M15 7l4 4-4 4M19 11h-9a5 5 0 000 10h2" />,
+  book: <path d="M5 4.5A1.5 1.5 0 016.5 3H19v15H6.5A1.5 1.5 0 005 19.5zM5 19.5A1.5 1.5 0 006.5 21H19" />,
+  eye: <g><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></g>,
 }
 export function Icon({ name, filled, size = 20, label }) {
   return (
