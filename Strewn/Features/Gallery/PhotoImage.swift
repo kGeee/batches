@@ -205,13 +205,14 @@ final class PhotoImageLoader: @unchecked Sendable {
             image = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
         }
         guard let image else { return nil }
+        let index = CGImageSourceGetPrimaryImageIndex(image)
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,    // respects the file's orientation
             kCGImageSourceShouldCacheImmediately: true,          // decode here, not on the main thread at first draw
             kCGImageSourceThumbnailMaxPixelSize: side
         ]
-        guard let cg = CGImageSourceCreateThumbnailAtIndex(image, 0, options as CFDictionary) else { return nil }
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(image, index, options as CFDictionary) else { return nil }
         return UIImage(cgImage: cg)
     }
 

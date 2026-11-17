@@ -678,7 +678,9 @@ final class AppModel {
             try await render(recipe, into: &photo)
             if let assetID = photo.photosAssetID {
                 let data = try Data(contentsOf: photo.imageURL)
-                try await PhotosEditSaver.saveRevertibleEdit(assetID: assetID, rendered: data, recipe: recipe)
+                // With limited or denied library access, the asset may not be reachable in Photos;
+                // keep the edit saved in Batches either way.
+                try? await PhotosEditSaver.saveRevertibleEdit(assetID: assetID, rendered: data, recipe: recipe)
             }
             myCollections[c].photos[p] = photo
             persist(myCollections[c])

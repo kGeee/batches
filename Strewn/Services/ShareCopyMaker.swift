@@ -14,9 +14,10 @@ enum ShareCopyMaker {
 
     static func make(from url: URL) throws -> [Photo.ShareTier: Data] {
         guard url.isFileURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { throw Failure.unreadable }
-        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        let w = props?[kCGImagePropertyPixelWidth] as? Int ?? 0
-        let h = props?[kCGImagePropertyPixelHeight] as? Int ?? 0
+        let index = CGImageSourceGetPrimaryImageIndex(source)
+        let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+        let w = (props?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+        let h = (props?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
         let isPanorama = min(w, h) > 0 && Double(max(w, h)) / Double(min(w, h)) > 2.2
 
         var copies: [Photo.ShareTier: Data] = [:]
@@ -28,7 +29,7 @@ enum ShareCopyMaker {
                 kCGImageSourceThumbnailMaxPixelSize: max(w, h) > 0 ? min(edge, max(w, h)) : edge,   // never upscale
                 kCGImageSourceShouldCacheImmediately: true
             ]
-            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { throw Failure.unreadable }
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else { throw Failure.unreadable }
             let data = NSMutableData()
             guard let dest = CGImageDestinationCreateWithData(data, UTType.heic.identifier as CFString, 1, nil) else { throw Failure.encode }
             CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: tier == .s ? 0.65 : 0.7] as CFDictionary)
