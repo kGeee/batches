@@ -34,6 +34,8 @@ final class PushNotifications: NSObject, UIApplicationDelegate, UNUserNotificati
     func updateBadgeCount(_ count: Int) {
         guard authorizationStatus == .authorized || authorizationStatus == .provisional else { return }
         UNUserNotificationCenter.current().setBadgeCount(count) { _ in }
+        // Everything has been read in the app, so the alerts left in Notification Center are stale.
+        if count == 0 { UNUserNotificationCenter.current().removeAllDeliveredNotifications() }
     }
 
     func clearCurrentToken() async -> String? {
@@ -47,8 +49,10 @@ final class PushNotifications: NSObject, UIApplicationDelegate, UNUserNotificati
     }
 
     /// Posts a local notification when new unread notifications arrive while the app is open or
-    /// refreshing and remote APNs delivery hasn't already alerted for them.
+    /// refreshing. Once this device has an APNs token the server pushes every notification itself
+    /// (and `willPresent` shows it in the foreground), so a local banner would only repeat it.
     func deliverLocalBannerIfNeeded(for item: ActivityItem) {
+        guard currentToken == nil else { return }
         guard authorizationStatus == .authorized || authorizationStatus == .provisional else { return }
         let content = UNMutableNotificationContent()
         let actorName = item.actor?.displayName ?? "Someone"

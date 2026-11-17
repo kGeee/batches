@@ -284,9 +284,10 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
     }
 
     func registerDeviceToken(_ token: String, environment: String) async throws {
-        let me = try await myID()
-        try await client.from("device_tokens")
-            .upsert(DeviceTokenRow(token: token, user_id: me, environment: environment, updated_at: .now))
+        _ = try await myID()
+        // An RPC rather than an upsert: if this phone was last signed in to another account, the
+        // token row belongs to that account and row level security would refuse to hand it over.
+        try await client.rpc("register_device_token", params: ["p_token": token, "p_environment": environment])
             .execute()
     }
 
@@ -557,9 +558,6 @@ private struct TagRow: Decodable {
 private struct TaggedPhotoLookupRow: Decodable {
     struct PhotoCollectionRef: Decodable { let collection_id: UUID }
     let photo: PhotoCollectionRef?
-}
-private struct DeviceTokenRow: Encodable {
-    let token: String; let user_id: UUID; let environment: String; let updated_at: Date
 }
 private struct NotificationRow: Decodable {
     struct TitleRow: Decodable { let title: String }
