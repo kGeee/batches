@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 /// Your desk: profile header and your piles, laid out how you like. A grid, one long row you scroll
 /// sideways, or freehand, with piles wherever you drop them. Piles can be kept together in groups in
@@ -257,7 +258,7 @@ struct DeskView: View {
         let batch: PhotoCollection?
     }
 
-    /// What's happened to your photos since you last looked, summed up in two lines.
+    /// What's happened since you last looked, summed up in two lines.
     private var news: News? {
         let unseen = model.unseenActivity
         guard !unseen.isEmpty, !arranging else { return nil }
@@ -273,27 +274,63 @@ struct DeskView: View {
         else if others > 0 { who += " and \(others.counted("other"))" }
 
         let likes = unseen.filter(\.isLike).count
-        let comments = unseen.count - likes
-        let verb = likes > 0 && comments > 0 ? "liked and commented" : likes > 0 ? "liked your photos" : "commented"
-        // The batch most of it happened in.
-        let batches = Dictionary(grouping: unseen.compactMap { model.batch(containing: $0.photoID) }, by: \.id)
+        let comments = unseen.filter {
+            if case .comment = $0.kind { return true }
+            if case .mention = $0.kind { return true }
+            return false
+        }.count
+        let tags = unseen.filter { $0.kind == .tag }.count
+        let shares = unseen.filter { if case .batchShared = $0.kind { return true } else { return false } }.count
+        let added = unseen.filter { if case .photoAdded = $0.kind { return true } else { return false } }.count
+        let follows = unseen.filter { $0.kind == .follow }.count
+
+        let verb: String
+        if tags > 0 && unseen.count == tags {
+            verb = "tagged you"
+        } else if shares > 0 && unseen.count == shares {
+            verb = "shared a batch with you"
+        } else if follows > 0 && unseen.count == follows {
+            verb = "started following you"
+        } else if added > 0 && unseen.count == added {
+            verb = "added to your batch"
+        } else if likes > 0 && comments == 0 && tags == 0 && shares == 0 && follows == 0 && added == 0 {
+            verb = "liked your photos"
+        } else if comments > 0 && likes == 0 && tags == 0 && shares == 0 && follows == 0 && added == 0 {
+            verb = "commented"
+        } else {
+            verb = "sent \(unseen.count.counted("notification"))"
+        }
+
+        let resolvedBatches = unseen.compactMap { item -> PhotoCollection? in
+            if let cid = item.collectionID {
+                return (model.myCollections + model.feed).first { $0.id == cid }
+            }
+            if let pid = item.photoID {
+                return model.batch(containing: pid)
+            }
+            return nil
+        }
+        let batches = Dictionary(grouping: resolvedBatches, by: \.id)
         let busiest = batches.max { $0.value.count < $1.value.count }?.value.first
-        // Counts first: a long title is what gets cut short, not the numbers.
         var parts: [String] = []
+        if tags > 0 { parts.append(tags.counted("tag")) }
+        if shares > 0 { parts.append(shares.counted("share")) }
         if likes > 0 { parts.append(likes.counted("like")) }
         if comments > 0 { parts.append(comments.counted("comment")) }
+        if added > 0 { parts.append(added.counted("addition")) }
+        if follows > 0 { parts.append(follows.counted("new follower")) }
         if let busiest { parts.append(busiest.title + (batches.count > 1 ? " and \(batches.count - 1) more" : "")) }
         return News(people: people, headline: "\(who) \(verb)", detail: parts.joined(separator: " · "), batch: busiest)
     }
 
     private func activityLine(_ news: News) -> some View {
         Button {
-            model.markActivitySeen()
-            if let batch = news.batch, model.myCollections.contains(where: { $0.id == batch.id }) {
-                open(batch)
-            } else {
+            if news.batch == nil || !model.myCollections.contains(where: { $0.id == news.batch?.id }) {
                 chrome?.showsActivity = true
                 chrome?.tab = .friends
+            } else if let batch = news.batch {
+                model.markActivitySeen()
+                open(batch)
             }
         } label: {
             HStack(spacing: 10) {
@@ -753,7 +790,7 @@ struct PileCaption: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(collection.title).batchTitle(collection.font, prominent ? .title3 : .subheadline).lineLimit(2)
-                if let totals, totals.likeCount + totals.commentCount > 0 {
+                if let totals, totals.likeCount + totals.commentCount + totals.tags.count > 0 {
                     Spacer(minLength: 4)
                     ReactionsLine(reactions: totals)
                 }
@@ -899,6 +936,7 @@ private struct EmptyDesk: View {
 struct AccountSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var pushStatus: UNAuthorizationStatus = .notDetermined
 
     private var frameCount: Int { model.myCollections.reduce(0) { $0 + $1.photos.count } }
     private var recentCovers: [Photo] { model.myCollections.compactMap(\.cover).prefix(4).map { $0 } }
@@ -936,6 +974,10 @@ struct AccountSheet: View {
                         VStack(spacing: 0) {
                             NavigationLink(value: me) {
                                 row("Your desk as friends see it", systemImage: "person.crop.rectangle")
+                            }
+                            Divider().padding(.leading, 48)
+                            Button { handleNotificationSettingsTap() } label: {
+                                row("Notifications", systemImage: "bell", detail: notificationStatusLabel)
                             }
                             Divider().padding(.leading, 48)
                             NavigationLink { BlockedPeopleView() } label: {
@@ -992,8 +1034,32 @@ struct AccountSheet: View {
             .paperNavigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task {
+                await model.push?.refreshAuthorizationStatus()
+                pushStatus = model.push?.authorizationStatus ?? .notDetermined
+            }
         }
         .tint(.strewnAccent)
+    }
+
+    private var notificationStatusLabel: String {
+        switch pushStatus {
+        case .authorized, .provisional, .ephemeral: "On"
+        case .denied: "Off"
+        case .notDetermined: "Set up"
+        @unknown default: ""
+        }
+    }
+
+    private func handleNotificationSettingsTap() {
+        if pushStatus == .notDetermined {
+            Task {
+                _ = await model.push?.requestPermission()
+                pushStatus = model.push?.authorizationStatus ?? .denied
+            }
+        } else if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(settingsURL)
+        }
     }
 
     /// Counts in a strip like film edge printing: big number, small label, hairline between.

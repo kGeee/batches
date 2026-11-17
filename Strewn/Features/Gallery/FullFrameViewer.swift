@@ -30,9 +30,14 @@ struct FullFrameViewer: View {
     var onLike: ((Photo) -> Void)?
     /// The batch the photos are in, for the comments sheet.
     var commentsBatch: PhotoCollection?
+    var canTag = false
+    var onOpenUser: ((User) -> Void)?
     var onCommentCount: (Photo, Int) -> Void
+    var onTagsChange: (Photo, [PhotoTag]) -> Void
 
     @State private var commentsPhoto: Photo?
+    @State private var tagsPhoto: Photo?
+    @State private var showTagPins = true
     /// The latest comments on each photo looked at, shown under it.
     @State private var latestComments: [UUID: [PhotoComment]] = [:]
 
@@ -54,12 +59,17 @@ struct FullFrameViewer: View {
          onEdit: ((Photo) -> Void)? = nil, onSetCover: ((Photo) -> Void)? = nil, onRemove: ((Photo) -> Void)? = nil,
          shareLink: ((Photo) -> URL)? = nil, shareTitle: String = "Batches", onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil,
          captionFont: BatchFont? = nil, reactions: [UUID: PhotoReactions]? = nil, onLike: ((Photo) -> Void)? = nil,
-         commentsBatch: PhotoCollection? = nil, onCommentCount: @escaping (Photo, Int) -> Void = { _, _ in }) {
+         commentsBatch: PhotoCollection? = nil, canTag: Bool = false, onOpenUser: ((User) -> Void)? = nil,
+         onCommentCount: @escaping (Photo, Int) -> Void = { _, _ in },
+         onTagsChange: @escaping (Photo, [PhotoTag]) -> Void = { _, _ in }) {
         self.captionFont = captionFont
         self.reactions = reactions
         self.onLike = onLike
         self.commentsBatch = commentsBatch
+        self.canTag = canTag
+        self.onOpenUser = onOpenUser
         self.onCommentCount = onCommentCount
+        self.onTagsChange = onTagsChange
         self.photos = photos.isEmpty ? [start] : photos
         self.coverID = coverID
         self.onEdit = onEdit
@@ -108,6 +118,15 @@ struct FullFrameViewer: View {
                     .presentationDetents([.medium, .large])
             }
         }
+        .sheet(item: $tagsPhoto) { photo in
+            if let commentsBatch {
+                PhotoTagsSheet(photo: photo, collection: commentsBatch, canManageTags: canTag,
+                               initialTags: reactions?[photo.id]?.tags ?? [],
+                               onOpenUser: onOpenUser,
+                               onTagsChange: { onTagsChange(photo, $0) })
+                    .presentationDetents([.medium, .large])
+            }
+        }
     }
 
     // MARK: Pages
@@ -116,7 +135,9 @@ struct FullFrameViewer: View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: 0) {
                 ForEach(photos) { photo in
-                    ZoomablePhoto(photo: photo, zoomed: photo.id == currentID ? $zoomed : .constant(false)) {
+                    let tags = !chromeHidden && showTagPins && !zoomed ? (reactions?[photo.id]?.tags ?? []) : []
+                    ZoomablePhoto(photo: photo, tags: tags, zoomed: photo.id == currentID ? $zoomed : .constant(false),
+                                  onOpenUser: onOpenUser) {
                         withAnimation(.easeOut(duration: 0.2)) { chromeHidden.toggle() }
                     }
                     .containerRelativeFrame([.horizontal, .vertical])
@@ -184,11 +205,14 @@ struct FullFrameViewer: View {
         }
     }
 
-    private var hasMenu: Bool { onEdit != nil || onSetCover != nil || onRemove != nil || onReport != nil }
+    private var hasMenu: Bool { onEdit != nil || onSetCover != nil || onRemove != nil || onReport != nil || canTag }
 
     /// The things you do to a photo now and then, kept away from the ones you tap every time.
     @ViewBuilder
     private func menuItems(_ photo: Photo) -> some View {
+        if canTag, commentsBatch != nil {
+            Button("Tag people", systemImage: "tag") { tagsPhoto = photo }
+        }
         if let onEdit {
             Button("Edit", systemImage: "slider.horizontal.3") { onEdit(photo) }
         }
@@ -205,13 +229,14 @@ struct FullFrameViewer: View {
         }
     }
 
-    /// Who added the photo, and the latest of what people said about it.
+    /// Who added the photo, who's tagged in it, and the latest of what people said about it.
     @ViewBuilder
     private func details(_ photo: Photo) -> some View {
         let adder = commentsBatch?.adder(of: photo)
+        let tags = reactions?[photo.id]?.tags ?? []
         let comments = latestComments[photo.id] ?? []
         let count = reactions?[photo.id]?.commentCount ?? 0
-        if adder != nil || (count > 0 && !comments.isEmpty) {
+        if adder != nil || !tags.isEmpty || (count > 0 && !comments.isEmpty) {
             VStack(alignment: .leading, spacing: 10) {
                 if let adder {
                     HStack(spacing: 8) {
@@ -220,14 +245,40 @@ struct FullFrameViewer: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                if count > 0, !comments.isEmpty {
+                if !tags.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "tag.fill").font(.caption2.weight(.semibold)).foregroundStyle(.white.opacity(0.75))
+                            ForEach(tags) { tag in
+                                Button {
+                                    if let user = tag.user, let onOpenUser {
+                                        onOpenUser(user)
+                                    } else {
+                                        tagsPhoto = photo
+                                    }
+                                } label: {
+                                    Text(tag.user.map { "@\($0.handle)" } ?? "Tagged")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 9).padding(.vertical, 4)
+                                        .background(.white.opacity(0.16), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
+                }
+                            if count > 0, !comments.isEmpty {
                     Button { commentsPhoto = photo } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(comments) { comment in
-                                (Text(comment.author?.displayName ?? "Someone").fontWeight(.semibold) + Text("  \(comment.body)"))
-                                    .font(.subheadline)
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.leading)
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(comment.author?.displayName ?? "Someone").fontWeight(.semibold)
+                                    MentionText(comment.body)
+                                }
+                                .font(.subheadline)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
                             }
                             if count > comments.count {
                                 Text("View all \(count) comments").font(.footnote).foregroundStyle(.white.opacity(0.6))
@@ -310,6 +361,29 @@ struct FullFrameViewer: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Comments, \(mine.commentCount)")
+                if canTag || !mine.tags.isEmpty {
+                    Button {
+                        tagsPhoto = photo
+                    } label: {
+                        actionLabel(mine.tags.isEmpty ? nil : "\(mine.tags.count)",
+                                    systemImage: mine.tags.isEmpty ? "tag" : "tag.fill",
+                                    tint: .white)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(canTag ? "Tag people, \(mine.tags.count)" : "Tagged people, \(mine.tags.count)")
+                }
+                if mine.tags.contains(where: \.hasPosition) {
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { showTagPins.toggle() }
+                    } label: {
+                        Image(systemName: showTagPins ? "eye" : "eye.slash")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .frame(width: 36, height: 36)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showTagPins ? "Hide tag pins" : "Show tag pins")
+                }
             }
             Spacer(minLength: 0)
             if let onShareBatch {
@@ -407,10 +481,12 @@ struct FullFrameViewer: View {
     }
 }
 
-/// One page: the photo fitted to the screen, with pinch and double-tap zoom.
+/// One page: the photo fitted to the screen, with pinch and double-tap zoom, plus pinned tags.
 private struct ZoomablePhoto: View {
     let photo: Photo
+    var tags: [PhotoTag] = []
     @Binding var zoomed: Bool
+    var onOpenUser: ((User) -> Void)?
     var onTap: () -> Void
 
     @State private var scale: CGFloat = 1
@@ -422,7 +498,22 @@ private struct ZoomablePhoto: View {
 
     var body: some View {
         GeometryReader { geo in
+            let fitted = fittedSize(in: geo.size)
             PhotoImage(photo: photo)
+                .overlay {
+                    ZStack {
+                        ForEach(tags) { tag in
+                            if let x = tag.x, let y = tag.y {
+                                PhotoTagPin(handle: tag.user?.handle ?? "tagged",
+                                            point: CGPoint(x: x, y: y),
+                                            in: fitted) {
+                                    if let user = tag.user { onOpenUser?(user) }
+                                }
+                            }
+                        }
+                    }
+                    .frame(width: fitted.width, height: fitted.height)
+                }
                 .scaleEffect(scale)
                 .offset(offset)
                 .frame(width: geo.size.width, height: geo.size.height)

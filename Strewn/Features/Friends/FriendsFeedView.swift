@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UserNotifications
 
 /// Batches from people you follow and batches shared with you, with what people did to your own
 /// photos under Activity.
@@ -12,18 +13,22 @@ struct FriendsFeedView: View {
     @Namespace private var feedSpace
     @State private var section = Section.batches
     @State private var openID: UUID?
-    /// Opened from Activity: the photo it was about, shown as soon as the batch is up.
+    @State private var openPileFallback: PhotoCollection?
+    /// Opened from Notifications: the photo it was about, shown as soon as the batch is up.
     @State private var openPhotoID: UUID?
-    /// Activity newer than this gets a dot. Kept from before the list was opened, which marks it all seen.
-    @State private var dotsSince = Date.distantFuture
+    /// Notification IDs that were unread when the list opened, so their dots stay while reading.
+    @State private var unreadIDsOnOpen: Set<String> = []
+    @State private var pushAuthStatus: UNAuthorizationStatus = .notDetermined
     /// Every push here goes through this path by value. Mixing in a view-based link (as Find
     /// people used to be) makes SwiftUI insert later pushes underneath it.
     @State private var path = NavigationPath()
 
-    /// The open batch: a friend's from the feed, or one of yours opened from Activity.
+    /// The open batch: a friend's from the feed, one of yours, or one fetched from a notification.
     private var open: PhotoCollection? {
         guard let openID else { return nil }
-        return model.feed.first { $0.id == openID } ?? model.myCollections.first { $0.id == openID }
+        return model.feed.first { $0.id == openID }
+            ?? model.myCollections.first { $0.id == openID }
+            ?? (openPileFallback?.id == openID ? openPileFallback : nil)
     }
 
     var body: some View {
@@ -102,7 +107,7 @@ struct FriendsFeedView: View {
             }
             PaperSegmented(selection: $section, options: [
                 (.batches, "Batches"),
-                (.activity, model.unseenActivity.isEmpty ? "Activity" : "Activity · \(model.unseenActivity.count)")
+                (.activity, model.unseenActivity.isEmpty ? "Notifications" : "Notifications · \(model.unseenActivity.count)")
             ])
         }
         .padding(.horizontal, 14)
@@ -113,15 +118,20 @@ struct FriendsFeedView: View {
     private func close() {
         withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { openID = nil }
         openPhotoID = nil
+        openPileFallback = nil
     }
 
-    /// Opening Activity marks it seen, but the dots stay on what was new until you leave.
+    /// Opening Notifications marks them read, while keeping the dots on what was new until you leave.
     private func showActivityIfNeeded(_ now: Section) {
         if now == .activity {
-            dotsSince = model.activitySeenAt
+            unreadIDsOnOpen = Set(model.unseenActivity.map(\.id))
             model.markActivitySeen()
+            Task {
+                await model.push?.refreshAuthorizationStatus()
+                pushAuthStatus = model.push?.authorizationStatus ?? .notDetermined
+            }
         } else {
-            dotsSince = .distantFuture
+            unreadIDsOnOpen = []
         }
     }
 
@@ -151,15 +161,18 @@ struct FriendsFeedView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
 
-    // MARK: Activity
+    // MARK: Notifications
 
     @ViewBuilder
     private var activity: some View {
+        if pushAuthStatus == .notDetermined {
+            pushPermissionPrompt
+        }
         if model.activity.isEmpty {
             VStack(spacing: 12) {
-                Image(systemName: "heart").font(.largeTitle).foregroundStyle(.secondary)
-                Text("No activity yet").titleStyle(.title3)
-                Text("When someone likes or comments on a photo in a batch you've shared, it shows up here.")
+                Image(systemName: "bell").font(.largeTitle).foregroundStyle(.secondary)
+                Text("No notifications yet").titleStyle(.title3)
+                Text("When someone tags you, mentions you, shares a batch, follows you, or reacts to your photos, it shows up here.")
                     .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
             .padding(28)
@@ -176,37 +189,59 @@ struct FriendsFeedView: View {
         }
     }
 
+    private var pushPermissionPrompt: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bell.badge")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.strewnAccent)
+                .frame(width: 38, height: 38)
+                .background(Color.strewnAccent.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Turn on push notifications").font(.subheadline.weight(.semibold))
+                Text("Know right away when someone tags you or shares a batch.").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button("Allow") {
+                Task {
+                    _ = await model.push?.requestPermission()
+                    pushAuthStatus = model.push?.authorizationStatus ?? .denied
+                }
+            }
+            .buttonStyle(.paper(.primary, compact: true))
+        }
+        .padding(14)
+        .background(Color.card, in: RoundedRectangle(cornerRadius: 16))
+    }
+
     private func activityRow(_ item: ActivityItem) -> some View {
-        let batch = model.batch(containing: item.photoID)
-        let photo = batch?.photos.first { $0.id == item.photoID }
+        let localBatch = item.collectionID.flatMap { id in (model.myCollections + model.feed).first { $0.id == id } }
+            ?? item.photoID.flatMap { model.batch(containing: $0) }
+        let photo = item.photoID.flatMap { pid in localBatch?.photos.first { $0.id == pid } } ?? localBatch?.cover
         let name = item.actor?.displayName ?? "Someone"
+        let title = item.batchTitle ?? localBatch?.title
+        let isNew = unreadIDsOnOpen.contains(item.id) || model.isUnread(item)
         return Button {
-            guard let batch else { return }
-            openPhotoID = item.photoID
-            withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { openID = batch.id }
+            openNotification(item, localBatch: localBatch)
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 AvatarView(user: item.actor, size: 34)
                 VStack(alignment: .leading, spacing: 3) {
-                    switch item.kind {
-                    case .like:
-                        (Text(name).fontWeight(.semibold) + Text(" liked your photo"))
-                            .font(.subheadline).multilineTextAlignment(.leading)
-                    case .comment(let body):
-                        (Text(name).fontWeight(.semibold) + Text(" commented: \(body)"))
-                            .font(.subheadline).lineLimit(3).multilineTextAlignment(.leading)
-                    }
-                    // The time first: a long title is what gets cut short.
+                    notificationText(name: name, item: item)
+                        .font(.subheadline)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
                     Text(([item.at.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))]
-                          + [batch?.title].compactMap { $0 }).joined(separator: " · "))
+                          + [title].compactMap { $0 }).joined(separator: " · "))
                         .metaStyle().lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if item.at > dotsSince {
+                if isNew {
                     Circle().fill(Color.strewnAccent).frame(width: 8, height: 8).padding(.top, 6)
                         .accessibilityLabel("New")
                 }
-                if let photo {
+                if case .follow = item.kind, let actor = item.actor, actor.id != model.me?.id {
+                    FollowButton(user: actor)
+                } else if let photo {
                     // The whole photo, small: never cropped to a square.
                     PhotoImage(photo: photo)
                         .frame(maxWidth: 48, maxHeight: 44)
@@ -219,6 +254,52 @@ struct FriendsFeedView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+    }
+
+    private func notificationText(name: String, item: ActivityItem) -> Text {
+        let bold = Text(name).fontWeight(.semibold)
+        switch item.kind {
+        case .like:
+            return bold + Text(" liked your photo")
+        case .comment(let body):
+            return bold + Text(" commented: \(body)")
+        case .mention(let body):
+            return bold + Text(" mentioned you: \(body)")
+        case .tag:
+            return bold + Text(" tagged you in a photo")
+        case .batchShared(let canAdd):
+            return bold + Text(canAdd ? " invited you to add photos to a batch" : " shared a batch with you")
+        case .photoAdded(let count):
+            return bold + Text(" added \(count == 1 ? "a photo" : "\(count) photos") to your batch")
+        case .follow:
+            return bold + Text(" started following you")
+        }
+    }
+
+    private func openNotification(_ item: ActivityItem, localBatch: PhotoCollection?) {
+        model.markNotificationRead(item.id)
+        if case .follow = item.kind, let actor = item.actor {
+            path.append(actor)
+            return
+        }
+        if let localBatch {
+            openPhotoID = item.photoID
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { openID = localBatch.id }
+            return
+        }
+        if let cid = item.collectionID {
+            Task {
+                if let fetched = await model.collection(id: cid) {
+                    openPileFallback = fetched
+                    openPhotoID = item.photoID
+                    withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { openID = fetched.id }
+                } else if let actor = item.actor {
+                    path.append(actor)
+                }
+            }
+        } else if let actor = item.actor {
+            path.append(actor)
+        }
     }
 }
 
@@ -263,7 +344,7 @@ private struct FeedCard: View {
             PileCaption(collection: collection)
             if showsFooter {
                 HStack(spacing: 10) {
-                    if let totals, totals.likeCount + totals.commentCount > 0 { ReactionsLine(reactions: totals) }
+                    if let totals, totals.likeCount + totals.commentCount + totals.tags.count > 0 { ReactionsLine(reactions: totals) }
                     Spacer(minLength: 4)
                     if collection.canAdd { addYours }
                 }
@@ -285,7 +366,7 @@ private struct FeedCard: View {
     }
 
     private var showsFooter: Bool {
-        collection.canAdd || (totals.map { $0.likeCount + $0.commentCount > 0 } ?? false)
+        collection.canAdd || (totals.map { $0.likeCount + $0.commentCount + $0.tags.count > 0 } ?? false)
     }
 
     private var addYours: some View {

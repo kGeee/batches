@@ -1,12 +1,16 @@
 import SwiftUI
 
-/// Someone's desk: their profile and the piles you're allowed to see.
+/// Someone's desk: their profile, the piles you're allowed to see, and batches they're tagged in.
 struct ProfileView: View {
+    enum Section: Hashable { case batches, tagged }
+
     let user: User
     @Environment(AppModel.self) private var model
     @Namespace private var pileSpace
     @State private var profile: User?
     @State private var piles: [PhotoCollection] = []
+    @State private var taggedPiles: [PhotoCollection] = []
+    @State private var section = Section.batches
     @State private var loaded = false
     @State private var openID: UUID?
     @State private var reporting = false
@@ -14,6 +18,7 @@ struct ProfileView: View {
 
     private var shown: User { profile ?? user }
     private var isMe: Bool { user.id == model.me?.id }
+    private var activePiles: [PhotoCollection] { section == .batches ? piles : taggedPiles }
     @Environment(\.windowLayout) private var window
     private var columns: [GridItem] { window.grid(alignment: .center) }
 
@@ -28,21 +33,31 @@ struct ProfileView: View {
                             Button("Unblock") { Task { await model.unblock(shown); await load() } }.buttonStyle(.bordered)
                         }
                         .padding(.top, 24).frame(maxWidth: .infinity)
-                    } else if loaded && piles.isEmpty {
-                        Text(isMe ? "No batches yet." : "Nothing of \(shown.displayName)'s is shared with you yet.")
-                            .font(.callout).foregroundStyle(.secondary).padding(.top, 24).frame(maxWidth: .infinity)
-                    }
-                    LazyVGrid(columns: columns, spacing: 10) {
-                        ForEach(piles) { pile in
-                            VStack(alignment: .leading, spacing: 2) {
-                                if openID == pile.id {
-                                    Color.clear.aspectRatio(1, contentMode: .fit)
-                                } else {
-                                    DeskPileView(collection: pile, namespace: pileSpace)
-                                        .contentShape(Rectangle())
-                                        .onTapGesture { withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { openID = pile.id } }
+                    } else {
+                        if !taggedPiles.isEmpty || section == .tagged {
+                            PaperSegmented(selection: $section, options: [
+                                (.batches, "Batches"),
+                                (.tagged, taggedPiles.isEmpty ? "Tagged" : "Tagged · \(taggedPiles.count)")
+                            ])
+                        }
+                        if loaded && activePiles.isEmpty {
+                            Text(section == .tagged
+                                 ? (isMe ? "Batches you're tagged in show up here." : "No visible batches tag \(shown.displayName) yet.")
+                                 : (isMe ? "No batches yet." : "Nothing of \(shown.displayName)'s is shared with you yet."))
+                                .font(.callout).foregroundStyle(.secondary).padding(.top, 24).frame(maxWidth: .infinity)
+                        }
+                        LazyVGrid(columns: columns, spacing: 10) {
+                            ForEach(activePiles) { pile in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if openID == pile.id {
+                                        Color.clear.aspectRatio(1, contentMode: .fit)
+                                    } else {
+                                        DeskPileView(collection: pile, namespace: pileSpace)
+                                            .contentShape(Rectangle())
+                                            .onTapGesture { withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { openID = pile.id } }
+                                    }
+                                    PileCaption(collection: pile, showsVisibility: isMe && pile.ownerID == model.me?.id)
                                 }
-                                PileCaption(collection: pile, showsVisibility: isMe)
                             }
                         }
                     }
@@ -53,8 +68,8 @@ struct ProfileView: View {
             .background(DeskMatBackground())
             .refreshable { await load() }
 
-            if let openID, let pile = piles.first(where: { $0.id == openID }) {
-                GalleryView(collection: pile, namespace: pileSpace, isOwner: isMe) {
+            if let openID, let pile = (piles + taggedPiles).first(where: { $0.id == openID }) {
+                GalleryView(collection: pile, namespace: pileSpace, isOwner: pile.ownerID == model.me?.id) {
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) { self.openID = nil }
                 }
                 .zIndex(1)
@@ -63,8 +78,8 @@ struct ProfileView: View {
         .paperNavigationTitle("@\(shown.handle)")
         .toolbar(openID == nil ? .automatic : .hidden, for: .navigationBar)
         .coversTabBar(openID != nil, key: "profile-\(user.id)")
-        .onChange(of: piles) { _, piles in
-            if let id = openID, !piles.contains(where: { $0.id == id }) { openID = nil }
+        .onChange(of: piles + taggedPiles) { _, allPiles in
+            if let id = openID, !allPiles.contains(where: { $0.id == id }) { openID = nil }
         }
         .toolbar {
             if !isMe {
@@ -122,7 +137,8 @@ struct ProfileView: View {
     private func load() async {
         async let p = model.profile(user.id)
         async let list = model.piles(of: user)
-        (profile, piles) = await (p, list)
+        async let tagged = model.taggedPiles(of: user)
+        (profile, piles, taggedPiles) = await (p, list, tagged)
         loaded = true
     }
 }

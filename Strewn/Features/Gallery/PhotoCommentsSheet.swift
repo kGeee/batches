@@ -17,9 +17,22 @@ struct PhotoCommentsSheet: View {
     @State private var failed = false
     @State private var problem: String?
     @State private var reporting: ReportTarget?
+    @State private var mentionResults: [User] = []
     @FocusState private var composing: Bool
 
     private var isOwner: Bool { collection.ownerID == model.me?.id }
+
+    private var activeMentionPrefix: String? {
+        guard let atIndex = draft.lastIndex(of: "@") else { return nil }
+        if atIndex > draft.startIndex {
+            let before = draft[draft.index(before: atIndex)]
+            if before.isLetter || before.isNumber || before == "_" || before == "." { return nil }
+        }
+        let after = String(draft[draft.index(after: atIndex)...])
+        guard !after.contains(where: \.isWhitespace), after.count <= 24,
+              after.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }) else { return nil }
+        return after.lowercased()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +53,12 @@ struct PhotoCommentsSheet: View {
             .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             .sheet(item: $reporting) { ReportSheet(subject: $0.subject, report: $0.report, owner: $0.owner) }
             .task { await load() }
+            .task(id: activeMentionPrefix) {
+                guard let prefix = activeMentionPrefix else { mentionResults = []; return }
+                if !prefix.isEmpty { try? await Task.sleep(for: .milliseconds(180)) }
+                guard !Task.isCancelled else { return }
+                mentionResults = await model.search(prefix)
+            }
         }
         .background(DeskMatBackground())
         .tint(.strewnAccent)
@@ -47,13 +66,23 @@ struct PhotoCommentsSheet: View {
 
     private func row(_ comment: PhotoComment) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            AvatarView(user: comment.author, size: 30)
+            Button {
+                if let author = comment.author {
+                    dismiss()
+                    model.linkedUser = author
+                }
+            } label: {
+                AvatarView(user: comment.author, size: 30)
+            }
+            .buttonStyle(.plain)
+            .disabled(comment.author == nil)
+
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(comment.author?.displayName ?? "Someone").font(.subheadline.weight(.semibold))
                     Text(comment.createdAt.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))).metaStyle()
                 }
-                Text(comment.body).font(.body).fixedSize(horizontal: false, vertical: true)
+                MentionText(comment.body).font(.body).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
@@ -93,10 +122,30 @@ struct PhotoCommentsSheet: View {
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
+            if activeMentionPrefix != nil, !mentionResults.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(mentionResults.prefix(8)) { person in
+                            Button { insertMention(person) } label: {
+                                HStack(spacing: 6) {
+                                    AvatarView(user: person, size: 22)
+                                    Text("@\(person.handle)").font(.caption.weight(.semibold))
+                                }
+                                .padding(.leading, 5).padding(.trailing, 10).padding(.vertical, 5)
+                                .background(Color.card, in: Capsule())
+                                .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.hidden)
+            }
             if let problem { Text(problem).font(.footnote).foregroundStyle(.red) }
             HStack(alignment: .bottom, spacing: 10) {
-                TextField("Add a comment", text: $draft, axis: .vertical)
+                TextField("Add a comment · @ to mention", text: $draft, axis: .vertical)
                     .lineLimit(1...5)
                     .focused($composing)
                     .paperField(focused: composing)
@@ -124,6 +173,12 @@ struct PhotoCommentsSheet: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    private func insertMention(_ person: User) {
+        guard let atIndex = draft.lastIndex(of: "@") else { return }
+        draft = String(draft[..<atIndex]) + "@\(person.handle) "
+        mentionResults = []
     }
 
     private var trimmed: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -205,7 +260,33 @@ struct BatchDescriptionSheet: View {
     }
 }
 
-/// A photo's likes and comments in the gallery: small, under the print, like a note in pencil.
+/// Renders @handle mentions as links (`strewn://u/<handle>`) highlighted in the app's accent color.
+struct MentionText: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(attributed)
+    }
+
+    private var attributed: AttributedString {
+        var result = AttributedString(text)
+        let pattern = #/(?:^|(?<=[^a-zA-Z0-9_.]))@([a-zA-Z0-9_.]{3,24})/#
+        for match in text.matches(of: pattern) {
+            let rawHandle = String(match.output.1).lowercased()
+            let cleanHandle = rawHandle.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            guard User.isValidHandle(cleanHandle),
+                  let start = AttributedString.Index(match.range.lowerBound, within: result),
+                  let end = AttributedString.Index(match.range.upperBound, within: result) else { continue }
+            result[start..<end].foregroundColor = .strewnAccent
+            result[start..<end].link = URL(string: "strewn://u/\(cleanHandle)")
+        }
+        return result
+    }
+}
+
+/// A photo's likes, comments and tagged people in the gallery: small, under the print, like a note in pencil.
 struct ReactionsLine: View {
     let reactions: PhotoReactions
 
@@ -218,11 +299,14 @@ struct ReactionsLine: View {
             if reactions.commentCount > 0 {
                 Label("\(reactions.commentCount)", systemImage: "bubble.left").foregroundStyle(.secondary)
             }
+            if !reactions.tags.isEmpty {
+                Label("\(reactions.tags.count)", systemImage: "tag").foregroundStyle(.secondary)
+            }
         }
         .font(.caption2.weight(.semibold).monospacedDigit())
         .labelStyle(CompactLabel())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(reactions.likeCount.counted("like")), \(reactions.commentCount.counted("comment"))")
+        .accessibilityLabel("\(reactions.likeCount.counted("like")), \(reactions.commentCount.counted("comment")), \(reactions.tags.count.counted("tagged person", plural: "tagged people"))")
     }
 
     private struct CompactLabel: LabelStyle {
