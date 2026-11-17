@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as api from './api.js'
 import { backdrop, boardLayout, cover, fontFamily, insets, showsBoard } from './look.js'
 import {
@@ -116,7 +116,8 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
       {viewing && (
         <Viewer batch={batch} photo={viewing} me={me} isOwner={isOwner} canTag={canTag(viewing)}
                 reactions={reactions?.[viewing.id]}
-                onClose={closeViewer} onLike={() => like(viewing)} onCopy={() => copyLink(viewing)}
+                onClose={closeViewer} onStep={(p) => go(batchURL(batch.id, p.id), { replace: true, state: { viewer: true, keepScroll: true } })}
+                onLike={() => like(viewing)} onCopy={() => copyLink(viewing)}
                 onTag={() => setTagging(viewing)}
                 onCommentCount={(n) => setCommentCount(viewing.id, n)}
                 onReport={canReport(viewing) ? () => setReporting({ subject: 'this photo', photoID: viewing.id }) : null}
@@ -240,14 +241,16 @@ function ReactionsLine({ r }) {
 function FilmRoll({ batch, reactions, canTag, onOpen, onTag }) {
   const border = batch.frame.borderWidth ?? 14
   const band = border * 1.1 + 22
+  const ref = useRef(null)
+  useFrameByFrame(ref)
   return (
-    <div className="roll" style={{ '--band': `${band}px`, '--hole': `${Math.max(7, border * 0.55)}px`, gap: Math.max(14, border * 0.8) }}>
+    <div className="roll" ref={ref} style={{ '--band': `${band}px`, '--hole': `${Math.max(7, border * 0.55)}px`, gap: Math.max(14, border * 0.8) }}>
       {batch.photos.map((photo, i) => {
-        const aspect = (photo.pixel_width || 1) / (photo.pixel_height || 1)
+        // Every frame runs the full width of the strip, portraits included.
         return (
           <figure key={photo.id}>
             <button className="roll-frame" onClick={() => onOpen(photo)} aria-label={`View photo ${i + 1}`}>
-              <Photo photo={photo} style={{ width: `min(100%, calc((100svh - 210px) * ${aspect}))` }} />
+              <Photo photo={photo} style={{ width: '100%' }} />
             </button>
             <MetaRow batch={batch} photo={photo} index={i} reactions={reactions?.[photo.id]}
                      canTag={canTag(photo)} onTag={() => onTag(photo)} />
@@ -256,6 +259,74 @@ function FilmRoll({ batch, reactions, canTag, onOpen, onTag }) {
       })}
     </div>
   )
+}
+
+/**
+ * On a laptop the roll advances a frame at a time, like winding film: one trackpad swipe, wheel
+ * turn or arrow key glides to the next photo. A photo taller than the window stops twice, at its
+ * top and then its bottom, so none of it is skipped. Touch screens keep their own scrolling.
+ */
+function useFrameByFrame(rollRef) {
+  useEffect(() => {
+    const bar = 64            // the sticky header
+    let quietTimer = null, gesture = false, target = null, targetAt = 0
+    let stepAt = 0, lastAt = 0, peak = 0, low = 0, dirNow = 0
+
+    const stops = () => {
+      const avail = window.innerHeight - bar
+      const list = [0]
+      for (const f of rollRef.current?.querySelectorAll('figure') ?? []) {
+        const top = f.getBoundingClientRect().top + window.scrollY - bar - 10
+        list.push(top)
+        const h = f.offsetHeight + 20
+        if (h > avail) list.push(top + h - avail)
+      }
+      list.push(document.documentElement.scrollHeight - window.innerHeight)
+      return list.map((y) => Math.max(0, Math.round(y))).sort((a, b) => a - b)
+    }
+    const advance = (dir) => {
+      // Mid-glide, count from where it's heading, so quick presses keep going a frame each.
+      const from = target != null && performance.now() - targetAt < 600 ? target : window.scrollY
+      const list = stops()
+      const to = dir > 0 ? list.find((y) => y > from + 4) : [...list].reverse().find((y) => y < from - 4)
+      if (to == null) return
+      target = to; targetAt = performance.now()
+      const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      window.scrollTo({ top: to, behavior: smooth ? 'smooth' : 'auto' })
+    }
+
+    const wheel = (e) => {
+      if (e.ctrlKey || document.body.classList.contains('locked') || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      e.preventDefault()
+      const now = performance.now()
+      const mag = Math.abs(e.deltaY), dir = Math.sign(e.deltaY)
+      // One swipe is one step, but macOS keeps sending fading momentum events for a second after
+      // the fingers lift. A new swipe shows up as scrolling that turns around, picks up again
+      // after a pause, or climbs well above the low point of a tail that had faded, and counts
+      // straight away. (`low` is the slowest since the last peak, so a swipe's own run-up never trips it.)
+      if (mag >= peak) { peak = mag; low = mag } else low = Math.min(low, mag)
+      const fresh = !gesture
+        || (dir !== dirNow && mag > 3)
+        || (now - stepAt > 120 && (now - lastAt > 70 || (mag > 6 && mag > low * 2.5 && low < peak * 0.5)))
+      lastAt = now
+      if (fresh) { peak = mag; low = mag }
+      clearTimeout(quietTimer)
+      quietTimer = setTimeout(() => { gesture = false }, 140)
+      if (!fresh || mag < 2) return
+      gesture = true; dirNow = dir; stepAt = now
+      advance(dir)
+    }
+    const key = (e) => {
+      if (document.body.classList.contains('locked') || e.target.closest?.('input, textarea, select, [contenteditable]')) return
+      const dir = { ArrowDown: 1, PageDown: 1, ' ': e.shiftKey ? -1 : 1, ArrowUp: -1, PageUp: -1 }[e.key]
+      if (!dir) return
+      e.preventDefault()
+      advance(dir)
+    }
+    window.addEventListener('wheel', wheel, { passive: false })
+    window.addEventListener('keydown', key)
+    return () => { window.removeEventListener('wheel', wheel); window.removeEventListener('keydown', key); clearTimeout(quietTimer) }
+  }, [rollRef])
 }
 
 /** The owner's freehand board: prints where they put them, at their size and turn. */
@@ -286,7 +357,7 @@ function Board({ batch, onOpen }) {
 // The full-frame viewer --------------------------------------------------------------------------
 
 /** Just the photo you opened, as large as it fits and never cropped, with its likes, comments and tags. */
-function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onLike, onCopy, onTag, onReport, onReportComment, onCommentCount }) {
+function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep, onLike, onCopy, onTag, onReport, onReportComment, onCommentCount }) {
   const [commentsOpen, setCommentsOpen] = useState(() => window.matchMedia('(min-width: 960px)').matches)
   const [showPins, setShowPins] = useState(true)
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 960px)').matches)
@@ -296,14 +367,21 @@ function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onLike,
     mq.addEventListener('change', on)
     return () => mq.removeEventListener('change', on)
   }, [])
+  const index = batch.photos.indexOf(photo)
+  const prev = batch.photos[index - 1] ?? null
+  const next = batch.photos[index + 1] ?? null
+  const swipe = useSwipe({ id: photo.id, hasPrev: !!prev, hasNext: !!next, onStep: (dir) => onStep(dir < 0 ? prev : next) })
   useEffect(() => {
-    const key = (e) => { if (e.key === 'Escape') onClose() }
+    const key = (e) => {
+      if (e.target.closest?.('textarea, input')) return
+      if (e.key === 'Escape') onClose()
+      else if (e.key === 'ArrowLeft') swipe.step(-1)
+      else if (e.key === 'ArrowRight') swipe.step(1)
+    }
     window.addEventListener('keydown', key)
     document.body.classList.add('locked')
     return () => { window.removeEventListener('keydown', key); document.body.classList.remove('locked') }
-  }, [onClose])
-  const index = batch.photos.indexOf(photo)
-  const aspect = (photo.pixel_width || 1) / (photo.pixel_height || 1)
+  }, [onClose, swipe.step])
   const tags = reactions?.tags ?? []
   const hasPins = tags.some((t) => t.x != null && t.y != null)
 
@@ -319,16 +397,27 @@ function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onLike,
             onReport && { label: 'Report photo', icon: 'flag', onClick: onReport },
           ]} />
         </div>
-        <div className="viewer-photo" onClick={(e) => e.stopPropagation()}
-             style={{ '--aspect': aspect, aspectRatio: `${photo.pixel_width || 1} / ${photo.pixel_height || 1}` }}>
-          <Photo photo={photo} tier="m" eager className="under" />
-          <Photo photo={photo} tier="l" eager />
-          {showPins && tags.map((t) => t.x != null && t.y != null && (
-            <Link key={t.user_id} className="tag-pin" to={t.user ? `/app/u/${t.user.handle}` : '#'}
-                  style={{ left: `${Math.min(92, Math.max(8, t.x * 100))}%`, top: `${Math.min(92, Math.max(8, t.y * 100))}%` }}>
-              @{t.user?.handle ?? 'tagged'}
-            </Link>
-          ))}
+        <div className="viewer-stage" ref={swipe.stageRef} {...swipe.handlers}>
+          <div className="viewer-track" style={swipe.trackStyle} onTransitionEnd={swipe.onTransitionEnd}>
+            {/* Keyed by photo, so the neighbour slid into view stays mounted and doesn't reload. */}
+            {[prev, photo, next].map((p, k) => p && (
+              <div key={p.id} className="viewer-slide" style={{ left: `${(k - 1) * 100}%` }} aria-hidden={p !== photo}>
+                <div className="viewer-photo" onClick={(e) => e.stopPropagation()}
+                     style={{ '--aspect': (p.pixel_width || 1) / (p.pixel_height || 1), aspectRatio: `${p.pixel_width || 1} / ${p.pixel_height || 1}` }}>
+                  <Photo photo={p} tier="m" eager className="under" />
+                  {p === photo && <Photo photo={p} tier="l" eager />}
+                  {p === photo && showPins && tags.map((t) => t.x != null && t.y != null && (
+                    <Link key={t.user_id} className="tag-pin" to={t.user ? `/app/u/${t.user.handle}` : '#'}
+                          style={{ left: `${Math.min(92, Math.max(8, t.x * 100))}%`, top: `${Math.min(92, Math.max(8, t.y * 100))}%` }}>
+                      @{t.user?.handle ?? 'tagged'}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {prev && <button className="round dark viewer-nav prev" onClick={(e) => { e.stopPropagation(); swipe.step(-1) }} aria-label="Previous photo"><Icon name="back" /></button>}
+          {next && <button className="round dark viewer-nav next" onClick={(e) => { e.stopPropagation(); swipe.step(1) }} aria-label="Next photo"><Icon name="forward" /></button>}
         </div>
         <div className="viewer-bottom" onClick={(e) => e.stopPropagation()}>
           <div className="viewer-text">
@@ -376,6 +465,112 @@ function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onLike,
       )}
     </div>
   )
+}
+
+/**
+ * Swiping between photos: the strip of neighbours follows the finger, then slides the rest of the
+ * way (a long enough drag or a flick) or springs back. At either end it only gives a little.
+ * `step` does the same slide for the arrow keys and buttons.
+ */
+function useSwipe({ id, hasPrev, hasNext, onStep }) {
+  const stageRef = useRef(null)
+  const [pos, setPos] = useState({ dx: 0, animate: false })
+  const drag = useRef(null)
+  const dragged = useRef(false)
+  const pending = useRef(0)
+  const latest = useRef({ hasPrev, hasNext, onStep })
+  latest.current = { hasPrev, hasNext, onStep }
+
+  // The new photo is now in the middle slot: put the strip back without animating.
+  useLayoutEffect(() => { pending.current = 0; setPos({ dx: 0, animate: false }) }, [id])
+
+  const settle = useCallback((dir) => {
+    const { hasPrev, hasNext, onStep } = latest.current
+    if (dir && !(dir < 0 ? hasPrev : hasNext)) dir = 0
+    if (dir && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { onStep(dir); return }
+    const width = stageRef.current?.clientWidth ?? window.innerWidth
+    pending.current = dir
+    setPos({ dx: -dir * width, animate: true })
+  }, [])
+  const step = useCallback((dir) => { if (!pending.current && !drag.current) settle(dir) }, [settle])
+
+  // Two-finger swipes on a trackpad arrive as horizontal wheel events. The strip follows them;
+  // past a threshold it commits straight away, and the rest of that gesture (including macOS's
+  // momentum events) is swallowed. If the fingers stop short, it springs back.
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    let dx = 0, idle = null, spent = false
+    const end = () => {
+      idle = null
+      if (!spent && dx) settle(0)
+      dx = 0; spent = false
+    }
+    const wheel = (e) => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) || e.ctrlKey) return
+      e.preventDefault()   // and no browser back/forward swipe
+      clearTimeout(idle)
+      idle = setTimeout(end, 160)
+      if (spent || pending.current || drag.current) return
+      const width = el.clientWidth || window.innerWidth
+      dx -= e.deltaMode === 1 ? e.deltaX * 16 : e.deltaX
+      const { hasPrev, hasNext } = latest.current
+      if (Math.abs(dx) > width * 0.15 && (dx < 0 ? hasNext : hasPrev)) { spent = true; settle(dx < 0 ? 1 : -1); return }
+      const atEnd = (dx > 0 && !hasPrev) || (dx < 0 && !hasNext)
+      setPos({ dx: atEnd ? dx * 0.25 : dx, animate: false })
+    }
+    el.addEventListener('wheel', wheel, { passive: false })
+    return () => { el.removeEventListener('wheel', wheel); clearTimeout(idle) }
+  }, [settle])
+
+  const onTransitionEnd = (e) => {
+    if (e.target !== e.currentTarget) return
+    const dir = pending.current
+    if (dir) latest.current.onStep(dir)
+    else setPos((p) => ({ ...p, animate: false }))
+  }
+
+  const handlers = {
+    onPointerDown: (e) => {
+      if (e.button !== 0 || pending.current || e.target.closest('button, a')) return
+      drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, lastT: e.timeStamp, v: 0, axis: null }
+      dragged.current = false
+    },
+    onPointerMove: (e) => {
+      const d = drag.current
+      if (!d || e.pointerId !== d.id) return
+      const dx = e.clientX - d.x, dy = e.clientY - d.y
+      if (!d.axis) {
+        if (Math.hypot(dx, dy) < 8) return
+        d.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+        if (d.axis === 'x') e.currentTarget.setPointerCapture(e.pointerId)
+      }
+      if (d.axis !== 'x') return
+      dragged.current = true
+      d.v = (e.clientX - d.lastX) / Math.max(1, e.timeStamp - d.lastT)
+      d.lastX = e.clientX; d.lastT = e.timeStamp
+      const { hasPrev, hasNext } = latest.current
+      const atEnd = (dx > 0 && !hasPrev) || (dx < 0 && !hasNext)
+      setPos({ dx: atEnd ? dx * 0.25 : dx, animate: false })
+    },
+    onPointerUp: (e) => {
+      const d = drag.current
+      drag.current = null
+      if (!d || d.axis !== 'x') return
+      const dx = e.clientX - d.x
+      const width = stageRef.current?.clientWidth ?? window.innerWidth
+      const flick = Math.abs(d.v) > 0.45 && Math.sign(d.v) === Math.sign(dx)
+      settle(Math.abs(dx) > width * 0.18 || flick ? (dx < 0 ? 1 : -1) : 0)
+    },
+    onPointerCancel: () => { if (drag.current?.axis === 'x') settle(0); drag.current = null },
+    // A drag that ends over the photo or the backdrop isn't a tap: don't open or close anything.
+    onClickCapture: (e) => { if (dragged.current) { e.stopPropagation(); e.preventDefault(); dragged.current = false } },
+  }
+  const trackStyle = {
+    transform: `translate3d(${pos.dx}px, 0, 0)`,
+    transition: pos.animate ? 'transform .3s cubic-bezier(.2, .8, .2, 1)' : 'none',
+  }
+  return { stageRef, handlers, trackStyle, onTransitionEnd, step }
 }
 
 /**

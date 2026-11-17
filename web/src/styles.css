@@ -274,7 +274,9 @@ input.code { font: 600 26px var(--mono); letter-spacing: .3em; text-align: cente
 
 /* The roll: one strip down the page, perforations down both sides. */
 .roll {
-  --band: 37px; --hole: 8px; position: relative; display: grid; width: min(860px, 100%); margin: 0 auto;
+  --band: 37px; --hole: 8px; position: relative; display: grid; margin: 0 auto;
+  /* Narrow enough that a 2:3 portrait, run full width, fits in the window under the bar. */
+  width: min(860px, 100%, calc((100svh - 130px) * .667 + 2 * var(--band)));
   padding: 20px var(--band); background: var(--film); color: var(--film-edge);
 }
 .roll::before, .roll::after {
@@ -298,6 +300,15 @@ input.code { font: 600 26px var(--mono); letter-spacing: .3em; text-align: cente
   align-self: center; justify-self: center; position: relative;
   width: min(calc(100% - 24px), calc((100dvh - 190px) * var(--aspect)));
 }
+/* The current photo between its neighbours, one stage-width apart, on a track that follows a swipe. */
+.viewer-stage { position: relative; min-height: 0; overflow: hidden; touch-action: pan-y pinch-zoom; overscroll-behavior: contain; user-select: none; -webkit-user-select: none; }
+.viewer-track { position: absolute; inset: 0; will-change: transform; }
+.viewer-slide { position: absolute; top: 0; bottom: 0; width: 100%; display: grid; }
+.viewer-nav { position: absolute; top: 50%; translate: 0 -50%; z-index: 2; display: none; }
+.viewer-nav.prev { left: 12px; }
+.viewer-nav.next { right: 12px; }
+@media (hover: hover) and (pointer: fine) { .viewer-nav { display: inline-flex; } }
+@media (prefers-reduced-motion: reduce) { .viewer-track { transition: none !important; } }
 .viewer-photo .photo { position: absolute; inset: 0; background: rgba(255, 255, 255, .05); }
 .viewer-photo .photo.under { background: none; }
 .viewer-photo .photo.under::after { display: none; }
