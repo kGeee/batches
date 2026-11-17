@@ -35,16 +35,26 @@ protocol Backend: Sendable {
     func follow(_ userID: UUID) async throws
     func unfollow(_ userID: UUID) async throws
 
-    // Photo likes and comments
-    /// Likes and comment counts for these photos, as you may see them.
+    // Photo likes, comments, tags and notifications
+    /// Likes, comment counts and tagged people for these photos, as you may see them.
     func reactions(to photoIDs: [UUID]) async throws -> [UUID: PhotoReactions]
     func setLiked(_ liked: Bool, photoID: UUID) async throws
     func comments(on photoID: UUID) async throws -> [PhotoComment]
     func addComment(id: UUID, body: String, photoID: UUID) async throws
     /// Your own comment, or any comment on a batch you own.
     func deleteComment(_ id: UUID) async throws
-    /// Likes and comments other people left on these photos, newest first.
+    func setTag(userID: UUID, x: Double?, y: Double?, photoID: UUID) async throws
+    func removeTag(userID: UUID, photoID: UUID) async throws
+    /// Likes and comments other people left on these photos, newest first (fallback before the
+    /// notifications table migration runs).
     func activity(on photoIDs: [UUID], limit: Int) async throws -> [ActivityItem]
+    /// Notifications for the signed-in person, newest first.
+    func notifications(limit: Int) async throws -> [ActivityItem]
+    func markNotificationsRead(_ ids: [String]) async throws
+    func registerDeviceToken(_ token: String, environment: String) async throws
+    func unregisterDeviceToken(_ token: String) async throws
+    /// Batches where `userID` is tagged in at least one visible photo, newest first.
+    func taggedCollections(for userID: UUID) async throws -> [PhotoCollection]
 
     // Your desk
     /// How you've arranged your desk, or nil if you never have. Only you can read it.
@@ -145,6 +155,8 @@ actor MockBackend: Backend {
                       authorID: SampleData.maya.id, body: "That light on the water. Which beach was this?",
                       createdAt: .now.addingTimeInterval(-7200))]
     } ?? []
+    private var photoTags: [PhotoTag]
+    private var notificationLog: [ActivityItem]
 
     private struct Pair: Hashable { let a: UUID; let b: UUID }
 
@@ -157,6 +169,40 @@ actor MockBackend: Backend {
         contributors = Set(SampleData.groupShares.compactMap { share in
             all.first { $0.title == share.title }.map { Pair(a: $0.id, b: share.with) }
         })
+        var initialTags: [PhotoTag] = []
+        var initialNotifications: [ActivityItem] = []
+        if let bigSur = SampleData.collections.first, let firstPhoto = bigSur.photos.first {
+            initialTags.append(PhotoTag(photoID: firstPhoto.id, userID: SampleData.maya.id, user: SampleData.maya,
+                                        taggedBy: SampleData.me.id, x: 0.44, y: 0.56,
+                                        createdAt: .now.addingTimeInterval(-14_400)))
+            initialNotifications.append(ActivityItem(id: UUID(uuidString: "6B1E0C1A-0004-4000-8000-000000000001")!.uuidString.lowercased(),
+                                                     kind: .like, actor: SampleData.maya, actorID: SampleData.maya.id,
+                                                     collectionID: bigSur.id, batchTitle: bigSur.title, photoID: firstPhoto.id,
+                                                     at: .now.addingTimeInterval(-3600)))
+            initialNotifications.append(ActivityItem(id: UUID(uuidString: "6B1E0C1A-0004-4000-8000-000000000002")!.uuidString.lowercased(),
+                                                     kind: .comment("That light on the water. Which beach was this?"),
+                                                     actor: SampleData.maya, actorID: SampleData.maya.id,
+                                                     collectionID: bigSur.id, batchTitle: bigSur.title, photoID: firstPhoto.id,
+                                                     commentID: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000001"),
+                                                     at: .now.addingTimeInterval(-7200)))
+        }
+        if let tomales = SampleData.friendCollections.first, let kayakPhoto = tomales.photos.first {
+            initialTags.append(PhotoTag(photoID: kayakPhoto.id, userID: SampleData.me.id, user: SampleData.me,
+                                        taggedBy: SampleData.maya.id, x: 0.52, y: 0.48,
+                                        createdAt: .now.addingTimeInterval(-5400)))
+            initialNotifications.append(ActivityItem(id: UUID(uuidString: "6B1E0C1A-0004-4000-8000-000000000003")!.uuidString.lowercased(),
+                                                     kind: .tag, actor: SampleData.maya, actorID: SampleData.maya.id,
+                                                     collectionID: tomales.id, batchTitle: tomales.title, photoID: kayakPhoto.id,
+                                                     at: .now.addingTimeInterval(-5400)))
+        }
+        if let mono = SampleData.friendCollections.first(where: { $0.title == "Mono Lake sunrise" }) {
+            initialNotifications.append(ActivityItem(id: UUID(uuidString: "6B1E0C1A-0004-4000-8000-000000000004")!.uuidString.lowercased(),
+                                                     kind: .batchShared(canAdd: true), actor: SampleData.theo, actorID: SampleData.theo.id,
+                                                     collectionID: mono.id, batchTitle: mono.title,
+                                                     at: .now.addingTimeInterval(-10_800)))
+        }
+        photoTags = initialTags
+        notificationLog = initialNotifications
     }
 
     // Account
@@ -193,6 +239,8 @@ actor MockBackend: Backend {
         desks[me] = nil
         photoLikes = photoLikes.filter { $0.b != me }
         photoComments.removeAll { $0.authorID == me }
+        photoTags.removeAll { $0.userID == me || $0.taggedBy == me }
+        notificationLog.removeAll { $0.actorID == me }
         people[me] = nil
         signedIn = nil
     }
@@ -246,8 +294,10 @@ actor MockBackend: Backend {
         var result: [UUID: PhotoReactions] = [:]
         for id in photoIDs where canViewPhoto(id) {
             let likers = photoLikes.filter { $0.a == id && ($0.b == me || !isBlocked(me, $0.b)) }
+            let tags = visibleTags(on: id, for: me)
             result[id] = PhotoReactions(likeCount: likers.count, likedByMe: likers.contains { $0.b == me },
-                                        commentCount: visibleComments(on: id, for: me).count)
+                                        commentCount: visibleComments(on: id, for: me).count,
+                                        tags: tags)
         }
         return result
     }
@@ -257,19 +307,116 @@ actor MockBackend: Backend {
         guard canViewPhoto(photoID) else { throw BackendError.notAllowed }
         if liked { photoLikes.insert(Pair(a: photoID, b: me)) } else { photoLikes.remove(Pair(a: photoID, b: me)) }
         likeTimes[Pair(a: photoID, b: me)] = liked ? .now : nil
+        if let pile = piles.values.first(where: { $0.photos.contains { $0.id == photoID } }),
+           let photo = pile.photos.first(where: { $0.id == photoID }) {
+            let owner = photo.addedBy ?? pile.ownerID
+            notificationLog.removeAll { $0.kind == .like && $0.photoID == photoID && $0.actorID == me }
+            if liked, owner == signedIn, owner != me {
+                notificationLog.append(ActivityItem(id: UUID().uuidString.lowercased(), kind: .like,
+                                                    actor: people[me], actorID: me, collectionID: pile.id,
+                                                    batchTitle: pile.title, photoID: photoID, at: .now))
+            }
+        }
     }
 
     func activity(on photoIDs: [UUID], limit: Int) async throws -> [ActivityItem] {
         let me = try requireMe()
         let ids = Set(photoIDs)
         let likes = photoLikes.filter { ids.contains($0.a) && $0.b != me && !isBlocked(me, $0.b) }.map { like in
-            ActivityItem(id: "like-\(like.a)-\(like.b)", kind: .like, actor: people[like.b], actorID: like.b, photoID: like.a,
-                         at: likeTimes[like] ?? .now.addingTimeInterval(-3600))
+            let pile = piles.values.first { $0.photos.contains { $0.id == like.a } }
+            return ActivityItem(id: "like-\(like.a)-\(like.b)", kind: .like, actor: people[like.b], actorID: like.b,
+                                collectionID: pile?.id, batchTitle: pile?.title, photoID: like.a,
+                                at: likeTimes[like] ?? .now.addingTimeInterval(-3600))
         }
-        let comments = photoComments.filter { ids.contains($0.photoID) && $0.authorID != me && !isBlocked(me, $0.authorID) }.map {
-            ActivityItem(id: "comment-\($0.id)", kind: .comment($0.body), actor: $0.author, actorID: $0.authorID, photoID: $0.photoID, at: $0.createdAt)
+        let comments = photoComments.filter { ids.contains($0.photoID) && $0.authorID != me && !isBlocked(me, $0.authorID) }.map { comment in
+            let batch = piles.values.first { b in b.photos.contains { p in p.id == comment.photoID } }
+            return ActivityItem(id: "comment-\(comment.id)", kind: .comment(comment.body), actor: comment.author, actorID: comment.authorID,
+                                collectionID: batch?.id, batchTitle: batch?.title, photoID: comment.photoID, commentID: comment.id,
+                                at: comment.createdAt)
         }
         return Array((likes + comments).sorted { $0.at > $1.at }.prefix(limit))
+    }
+
+    func setTag(userID: UUID, x: Double?, y: Double?, photoID: UUID) async throws {
+        let me = try requireMe()
+        guard let pile = piles.values.first(where: { $0.photos.contains { $0.id == photoID } }),
+              let photo = pile.photos.first(where: { $0.id == photoID }) else { throw BackendError.notAllowed }
+        let canTag = pile.ownerID == me || (photo.addedBy == me && contributors.contains(Pair(a: pile.id, b: me)))
+        guard canTag, !isBlocked(me, userID), !isBlocked(pile.ownerID, userID) else { throw BackendError.notAllowed }
+        if let x, let y {
+            guard (0...1).contains(x), (0...1).contains(y) else { throw BackendError.notAllowed }
+        } else if x != nil || y != nil {
+            throw BackendError.notAllowed
+        }
+        photoTags.removeAll { $0.photoID == photoID && $0.userID == userID }
+        photoTags.append(PhotoTag(photoID: photoID, userID: userID, user: people[userID].map(withCounts),
+                                  taggedBy: me, x: x, y: y, createdAt: .now))
+    }
+
+    func removeTag(userID: UUID, photoID: UUID) async throws {
+        let me = try requireMe()
+        guard let tag = photoTags.first(where: { $0.photoID == photoID && $0.userID == userID }) else { return }
+        let pile = piles.values.first { $0.photos.contains { $0.id == photoID } }
+        let photo = pile?.photos.first { $0.id == photoID }
+        let allowed = userID == me || tag.taggedBy == me || pile?.ownerID == me || photo?.addedBy == me
+        guard allowed else { throw BackendError.notAllowed }
+        photoTags.removeAll { $0.photoID == photoID && $0.userID == userID }
+        if userID == me {
+            notificationLog.removeAll { $0.kind == .tag && $0.photoID == photoID }
+        }
+    }
+
+    func notifications(limit: Int) async throws -> [ActivityItem] {
+        let me = try requireMe()
+        let visible = notificationLog.filter { item in
+            guard !isBlocked(me, item.actorID) else { return false }
+            if let cid = item.collectionID, let pile = piles[cid] {
+                if !canView(pile) { return false }
+            }
+            if let pid = item.photoID, !canViewPhoto(pid) { return false }
+            return true
+        }
+        return Array(visible.sorted { $0.at > $1.at }.prefix(limit))
+    }
+
+    func markNotificationsRead(_ ids: [String]) async throws {
+        _ = try requireMe()
+        let targets = Set(ids.map { $0.lowercased() })
+        let now = Date.now
+        for i in notificationLog.indices where targets.contains(notificationLog[i].id.lowercased()) {
+            if notificationLog[i].readAt == nil { notificationLog[i].readAt = now }
+        }
+    }
+
+    func registerDeviceToken(_ token: String, environment: String) async throws { _ = try requireMe() }
+    func unregisterDeviceToken(_ token: String) async throws {}
+
+    func taggedCollections(for userID: UUID) async throws -> [PhotoCollection] {
+        let me = try requireMe()
+        guard userID == me || !isBlocked(me, userID) else { return [] }
+        let taggedPhotoIDs = Set(photoTags.filter { tag in
+            tag.userID == userID
+                && canViewPhoto(tag.photoID)
+                && (tag.taggedBy == me || !isBlocked(me, tag.taggedBy))
+        }.map(\.photoID))
+        return piles.values
+            .filter { pile in canView(pile) && pile.photos.contains { taggedPhotoIDs.contains($0.id) } }
+            .sorted { ($0.shotOn ?? .distantPast) > ($1.shotOn ?? .distantPast) }
+            .map(decorated)
+    }
+
+    private func visibleTags(on photoID: UUID, for me: UUID) -> [PhotoTag] {
+        photoTags.filter { tag in
+            tag.photoID == photoID
+                && (tag.userID == me || !isBlocked(me, tag.userID))
+                && (tag.taggedBy == me || !isBlocked(me, tag.taggedBy))
+        }
+        .sorted { $0.createdAt < $1.createdAt }
+        .map { tag in
+            var tag = tag
+            tag.user = people[tag.userID].map(withCounts) ?? tag.user
+            return tag
+        }
     }
 
     func comments(on photoID: UUID) async throws -> [PhotoComment] {
@@ -409,6 +556,13 @@ actor MockBackend: Backend {
         }
         members = members.filter { !cut($0) }
         contributors = contributors.filter { !cut($0) }
+        photoTags.removeAll { tag in
+            let owner = piles.values.first { $0.photos.contains { $0.id == tag.photoID } }?.ownerID
+            let adder = piles.values.flatMap(\.photos).first { $0.id == tag.photoID }?.addedBy
+            return (tag.userID == me && (tag.taggedBy == userID || owner == userID || adder == userID))
+                || (tag.userID == userID && (tag.taggedBy == me || owner == me || adder == me))
+        }
+        notificationLog.removeAll { $0.actorID == userID }
     }
     func unblock(_ userID: UUID) async throws {
         let me = try requireMe()

@@ -8,6 +8,9 @@ enum PhotosEditSaver {
     enum SaveError: Error { case assetNotFound, noEditingInput }
 
     static func saveRevertibleEdit(assetID: String, rendered heif: Data, recipe: EditRecipe) async throws {
+        if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .notDetermined {
+            _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+        }
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil).firstObject else {
             throw SaveError.assetNotFound
         }

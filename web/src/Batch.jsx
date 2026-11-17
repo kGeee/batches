@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from './api.js'
 import { backdrop, boardLayout, cover, fontFamily, insets, showsBoard } from './look.js'
 import {
-  Avatar, Framed, Icon, Link, Menu, Photo, Sheet, Spinner, Toast,
+  Avatar, Framed, Icon, Link, MentionText, Menu, Photo, Sheet, Spinner, Toast,
   appURL, back, batchURL, counted, go, longDate, relative,
 } from './ui.jsx'
 
@@ -11,30 +11,37 @@ import {
  * column, two columns, a roll of film, or the owner's freehand board, on the owner's background.
  * Full frame is the rule; nothing is cropped.
  */
-export default function BatchPage({ id, photoID, ctx }) {
+export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   const { me } = ctx
   const [batch, setBatch] = useState(undefined)   // undefined while loading, null when not allowed
   const [problem, setProblem] = useState(null)
   const [reactions, setReactions] = useState(null)
+  const [canAdd, setCanAdd] = useState(false)
+  const [tagging, setTagging] = useState(null)
   const [reporting, setReporting] = useState(null)
   const [toast, setToast] = useState(null)
 
   useEffect(() => {
     let live = true
-    setBatch(undefined); setProblem(null); setReactions(null)
-    api.batch(id).then((b) => {
+    setBatch(undefined); setProblem(null); setReactions(null); setCanAdd(false)
+    api.batch(id).then(async (b) => {
       if (!live) return
       // Someone you've blocked is hidden by the database already; this covers the moment between.
-      setBatch(b && !ctx.blocked.has(b.owner_id) ? b : null)
+      const visible = b && !ctx.blocked.has(b.owner_id) ? b : null
+      setBatch(visible)
+      if (visible && me && visible.owner_id !== me.id) {
+        api.canAddToBatch(visible.id, me.id).then((allowed) => live && setCanAdd(allowed)).catch(() => {})
+      }
     }).catch((e) => live && setProblem(e))
     return () => { live = false }
-  }, [id, ctx.blocked])
+  }, [id, ctx.blocked, me?.id])
 
   const photoIDs = useMemo(() => batch?.photos.map((p) => p.id) ?? [], [batch])
   useEffect(() => {
-    if (!photoIDs.length) return
+    // Signed out there are no likes, comments or tags to show: those stay behind signing in.
+    if (!photoIDs.length || !me) return
     api.reactions(photoIDs, me.id).then(setReactions).catch(() => setReactions(null))
-  }, [photoIDs, me.id])
+  }, [photoIDs, me?.id])
 
   /** Optimistic: the heart fills straight away and goes back if the server says no. */
   const like = useCallback((photo) => {
@@ -46,17 +53,21 @@ export default function BatchPage({ id, photoID, ctx }) {
       setReactions((r) => ({ ...r, [photo.id]: before }))
       setToast("Couldn't save that like")
     })
-  }, [reactions, me.id])
+  }, [reactions, me?.id])
 
   const setCommentCount = useCallback((photoID, n) => {
     setReactions((r) => (r?.[photoID] ? { ...r, [photoID]: { ...r[photoID], comments: n } } : r))
   }, [])
 
+  const setPhotoTags = useCallback((photoID, tags) => {
+    setReactions((r) => (r?.[photoID] ? { ...r, [photoID]: { ...r[photoID], tags } } : r))
+  }, [])
+
   if (problem) return <Trouble text={problem.message} />
   if (batch === undefined) return <Spinner />
-  if (batch === null) return <NoAccess id={id} photoID={photoID} me={me} />
+  if (batch === null) return me ? <NoAccess id={id} photoID={photoID} me={me} /> : signInInstead
 
-  const isOwner = batch.owner_id === me.id
+  const isOwner = !!me && batch.owner_id === me.id
   const look = backdrop(batch)
   const viewing = photoID ? batch.photos.find((p) => p.id === photoID) : null
   const open = (photo) => go(batchURL(batch.id, photo.id), { state: { viewer: true, keepScroll: true } })
@@ -70,14 +81,15 @@ export default function BatchPage({ id, photoID, ctx }) {
       setToast('Link copied. It opens for people who can see this batch.')
     } catch { setToast("Couldn't copy the link") }
   }
-  const canReport = (photo) => (photo.added_by ?? batch.owner_id) !== me.id
+  const canReport = (photo) => !!me && (photo.added_by ?? batch.owner_id) !== me.id
+  const canTag = (photo) => isOwner || (canAdd && photo.added_by === me.id)
 
   return (
     <div className={`wall wall-${look.key} ${look.neutral ? 'neutral' : ''}`}
          data-scheme={look.scheme ?? undefined}
          style={look.color ? { '--wall': look.color } : undefined}>
-      <BatchHeader batch={batch} isOwner={isOwner} onCopy={() => copyLink(null)}
-                   onReport={!isOwner ? () => setReporting({ subject: 'this batch', batchID: batch.id, userID: batch.owner_id }) : null} />
+      <BatchHeader batch={batch} isOwner={isOwner} guest={!me} onCopy={() => copyLink(null)}
+                   onReport={me && !isOwner ? () => setReporting({ subject: 'this batch', batchID: batch.id, userID: batch.owner_id }) : null} />
       <section className="intro">
         <h1 className="batch-title" style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</h1>
         {batch.description && <p className="description" style={{ fontFamily: fontFamily(batch.font) }}>{batch.description}</p>}
@@ -88,15 +100,33 @@ export default function BatchPage({ id, photoID, ctx }) {
           </Link>
         )}
       </section>
-      <BatchBody batch={batch} reactions={reactions} onOpen={open} />
+      <BatchBody batch={batch} reactions={reactions} canTag={canTag} onOpen={open} onTag={(p) => setTagging(p)} />
       {!batch.photos.length && <p className="meta center-text">No photos in this batch yet.</p>}
-      <p className="app-only meta center-text">Editing, adding photos and arranging happen in Batches on iPhone.</p>
+      {me ? (
+        <p className="app-only meta center-text">Editing, adding photos and arranging happen in Batches on iPhone.</p>
+      ) : (
+        <div className="guest-cta">
+          <p className="meta">Sign in to like, comment and see who's tagged.</p>
+          <div className="guest-cta-actions">
+            <button className="primary" onClick={ctx.signIn}>Sign in</button>
+            <a className="button secondary" href={appURL(batch.id, photoID)}>Open in Batches</a>
+          </div>
+        </div>
+      )}
       {viewing && (
-        <Viewer batch={batch} photo={viewing} me={me} isOwner={isOwner} reactions={reactions?.[viewing.id]}
+        <Viewer batch={batch} photo={viewing} me={me} isOwner={isOwner} canTag={canTag(viewing)}
+                reactions={reactions?.[viewing.id]}
                 onClose={closeViewer} onLike={() => like(viewing)} onCopy={() => copyLink(viewing)}
+                onTag={() => setTagging(viewing)}
                 onCommentCount={(n) => setCommentCount(viewing.id, n)}
                 onReport={canReport(viewing) ? () => setReporting({ subject: 'this photo', photoID: viewing.id }) : null}
                 onReportComment={(c) => setReporting({ subject: 'this comment', commentID: c.id })} />
+      )}
+      {tagging && (
+        <TagsSheet photo={tagging} me={me} blocked={ctx.blocked} canManage={canTag(tagging)}
+                   tags={reactions?.[tagging.id]?.tags ?? []}
+                   onClose={() => setTagging(null)}
+                   onChange={(next) => setPhotoTags(tagging.id, next)} />
       )}
       {reporting && <ReportSheet target={reporting} onClose={() => setReporting(null)} onSent={() => { setReporting(null); setToast('Thanks. We look at every report within a day.') }} />}
       {toast && <Toast text={toast} onDone={() => setToast(null)} />}
@@ -104,7 +134,7 @@ export default function BatchPage({ id, photoID, ctx }) {
   )
 }
 
-function BatchHeader({ batch, isOwner, onCopy, onReport }) {
+function BatchHeader({ batch, isOwner, guest, onCopy, onReport }) {
   const [scrolled, setScrolled] = useState(false)
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 140)
@@ -114,7 +144,11 @@ function BatchHeader({ batch, isOwner, onCopy, onReport }) {
   }, [])
   return (
     <header className="gallerybar">
-      <button className="round" onClick={() => back('/app')} aria-label="Back"><Icon name="back" /></button>
+      {guest ? (
+        <a className="round brand-round" href="/" aria-label="Batches"><img src="/img/icon.png" alt="" width="26" height="26" /></a>
+      ) : (
+        <button className="round" onClick={() => back('/app')} aria-label="Back"><Icon name="back" /></button>
+      )}
       <div className={`gallerybar-title ${scrolled ? 'on' : ''}`} aria-hidden={!scrolled}>
         <b style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</b>
         <span className="meta">{counted(batch.photos.length, 'frame')}{!isOwner && batch.owner ? ` · @${batch.owner.handle}` : ''}</span>
@@ -128,9 +162,9 @@ function BatchHeader({ batch, isOwner, onCopy, onReport }) {
   )
 }
 
-function BatchBody({ batch, reactions, onOpen }) {
+function BatchBody({ batch, reactions, canTag, onOpen, onTag }) {
   const { frame } = batch
-  if (frame.kind === 'filmStrip') return <FilmRoll batch={batch} reactions={reactions} onOpen={onOpen} />
+  if (frame.kind === 'filmStrip') return <FilmRoll batch={batch} reactions={reactions} canTag={canTag} onOpen={onOpen} onTag={onTag} />
   if (showsBoard(batch)) return <Board batch={batch} onOpen={onOpen} />
   if (frame.layout === 'twoColumn') {
     // A contact sheet: the prints alone read better, as in the app.
@@ -154,7 +188,8 @@ function BatchBody({ batch, reactions, onOpen }) {
         return (
           <figure key={photo.id}>
             <Framed photo={photo} frame={frame} font={batch.font} index={i} photoWidth={width} onClick={() => onOpen(photo)} />
-            <MetaRow batch={batch} photo={photo} index={i} reactions={reactions?.[photo.id]} />
+            <MetaRow batch={batch} photo={photo} index={i} reactions={reactions?.[photo.id]}
+                     canTag={canTag(photo)} onTag={() => onTag(photo)} />
           </figure>
         )
       })}
@@ -162,16 +197,28 @@ function BatchBody({ batch, reactions, onOpen }) {
   )
 }
 
-function MetaRow({ batch, photo, index, reactions }) {
+function MetaRow({ batch, photo, index, reactions, canTag, onTag }) {
   const parts = [String(index + 1).padStart(2, '0')]
   if (photo.exif?.aperture) parts.push(`ƒ${+photo.exif.aperture.toFixed(1)}`)
   if (photo.exif?.shutter) parts.push(photo.exif.shutter)
   if (photo.exif?.iso) parts.push(`ISO ${photo.exif.iso}`)
   if (photo.edit) parts.push('edited')
+  const tags = reactions?.tags ?? []
   return (
     <figcaption className="metarow">
       <span className="meta">{parts.join(' · ')}{photo.adder ? ` · added by @${photo.adder.handle}` : ''}</span>
+      {tags.length > 0 && (
+        <button type="button" className="tag-chip" onClick={onTag}>
+          <Icon name="tag" size={12} />
+          <span>{tags[0].user ? `@${tags[0].user.handle}` : '1 tagged'}{tags.length > 1 ? ` +${tags.length - 1}` : ''}</span>
+        </button>
+      )}
       <span className="spacer" />
+      {canTag && !tags.length && (
+        <button type="button" className="tag-chip quiet" onClick={onTag} aria-label="Tag people">
+          <Icon name="tag" size={12} /><span>Tag</span>
+        </button>
+      )}
       {reactions && <ReactionsLine r={reactions} />}
       {photo.id === cover(batch)?.id && <span className="cover-tag"><Icon name="star" filled size={12} /> Cover</span>}
     </figcaption>
@@ -179,7 +226,8 @@ function MetaRow({ batch, photo, index, reactions }) {
 }
 
 function ReactionsLine({ r }) {
-  if (!r.likes && !r.comments) return null
+  const tagCount = r.tags?.length ?? 0
+  if (!r.likes && !r.comments && !tagCount) return null
   return (
     <span className="reactions-line" aria-label={`${counted(r.likes, 'like')}, ${counted(r.comments, 'comment')}`}>
       {r.likes > 0 && <span className={r.liked ? 'liked' : ''}><Icon name="heart" filled={r.liked} size={13} />{r.likes}</span>}
@@ -189,7 +237,7 @@ function ReactionsLine({ r }) {
 }
 
 /** One continuous strip of film running down the page, perforations along both sides. */
-function FilmRoll({ batch, reactions, onOpen }) {
+function FilmRoll({ batch, reactions, canTag, onOpen, onTag }) {
   const border = batch.frame.borderWidth ?? 14
   const band = border * 1.1 + 22
   return (
@@ -201,7 +249,8 @@ function FilmRoll({ batch, reactions, onOpen }) {
             <button className="roll-frame" onClick={() => onOpen(photo)} aria-label={`View photo ${i + 1}`}>
               <Photo photo={photo} style={{ width: `min(100%, calc((100svh - 210px) * ${aspect}))` }} />
             </button>
-            <MetaRow batch={batch} photo={photo} index={i} reactions={reactions?.[photo.id]} />
+            <MetaRow batch={batch} photo={photo} index={i} reactions={reactions?.[photo.id]}
+                     canTag={canTag(photo)} onTag={() => onTag(photo)} />
           </figure>
         )
       })}
@@ -236,9 +285,10 @@ function Board({ batch, onOpen }) {
 
 // The full-frame viewer --------------------------------------------------------------------------
 
-/** Just the photo you opened, as large as it fits and never cropped, with its likes and comments. */
-function Viewer({ batch, photo, me, isOwner, reactions, onClose, onLike, onCopy, onReport, onReportComment, onCommentCount }) {
+/** Just the photo you opened, as large as it fits and never cropped, with its likes, comments and tags. */
+function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onLike, onCopy, onTag, onReport, onReportComment, onCommentCount }) {
   const [commentsOpen, setCommentsOpen] = useState(() => window.matchMedia('(min-width: 960px)').matches)
+  const [showPins, setShowPins] = useState(true)
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 960px)').matches)
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 960px)')
@@ -254,6 +304,8 @@ function Viewer({ batch, photo, me, isOwner, reactions, onClose, onLike, onCopy,
   }, [onClose])
   const index = batch.photos.indexOf(photo)
   const aspect = (photo.pixel_width || 1) / (photo.pixel_height || 1)
+  const tags = reactions?.tags ?? []
+  const hasPins = tags.some((t) => t.x != null && t.y != null)
 
   return (
     <div className={`viewer ${commentsOpen && wide ? 'with-panel' : ''}`} role="dialog" aria-modal="true" aria-label={`Photo ${index + 1} of ${batch.title}`}>
@@ -262,6 +314,7 @@ function Viewer({ batch, photo, me, isOwner, reactions, onClose, onLike, onCopy,
           <button className="round dark" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
           <span className="viewer-count">{String(index + 1).padStart(2, '0')} of {batch.photos.length}</span>
           <Menu className="dark" items={[
+            canTag && { label: 'Tag people', icon: 'tag', onClick: onTag },
             { label: 'Copy link to photo', icon: 'link', onClick: onCopy },
             onReport && { label: 'Report photo', icon: 'flag', onClick: onReport },
           ]} />
@@ -270,10 +323,26 @@ function Viewer({ batch, photo, me, isOwner, reactions, onClose, onLike, onCopy,
              style={{ '--aspect': aspect, aspectRatio: `${photo.pixel_width || 1} / ${photo.pixel_height || 1}` }}>
           <Photo photo={photo} tier="m" eager className="under" />
           <Photo photo={photo} tier="l" eager />
+          {showPins && tags.map((t) => t.x != null && t.y != null && (
+            <Link key={t.user_id} className="tag-pin" to={t.user ? `/app/u/${t.user.handle}` : '#'}
+                  style={{ left: `${Math.min(92, Math.max(8, t.x * 100))}%`, top: `${Math.min(92, Math.max(8, t.y * 100))}%` }}>
+              @{t.user?.handle ?? 'tagged'}
+            </Link>
+          ))}
         </div>
         <div className="viewer-bottom" onClick={(e) => e.stopPropagation()}>
           <div className="viewer-text">
             {photo.caption && <p className="caption">{photo.caption}</p>}
+            {tags.length > 0 && (
+              <div className="viewer-tags">
+                <Icon name="tag" size={13} />
+                {tags.map((t) => (
+                  <Link key={t.user_id} className="viewer-tag-pill" to={t.user ? `/app/u/${t.user.handle}` : '#'}>
+                    @{t.user?.handle ?? 'tagged'}
+                  </Link>
+                ))}
+              </div>
+            )}
             <p className="meta light">{photo.adder ? `Added by @${photo.adder.handle} · ` : ''}{photo.pixel_width} × {photo.pixel_height} · full frame</p>
           </div>
           {reactions && (
@@ -286,6 +355,17 @@ function Viewer({ batch, photo, me, isOwner, reactions, onClose, onLike, onCopy,
                       aria-expanded={commentsOpen} aria-label="Comments">
                 <Icon name="comment" /><span>{reactions.comments || ''}</span>
               </button>
+              {(canTag || tags.length > 0) && (
+                <button className="pill" onClick={onTag} aria-label={canTag ? 'Tag people' : 'Tagged people'}>
+                  <Icon name="tag" /><span>{tags.length || ''}</span>
+                </button>
+              )}
+              {hasPins && (
+                <button className="pill" onClick={() => setShowPins(!showPins)}
+                        aria-label={showPins ? 'Hide tag pins' : 'Show tag pins'}>
+                  <Icon name={showPins ? 'eye' : 'eyeOff'} />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -305,10 +385,29 @@ function Viewer({ batch, photo, me, isOwner, reactions, onClose, onLike, onCopy,
 function Comments({ photo, batch, me, isOwner, panel, onClose, onCount, onReport }) {
   const [list, setList] = useState(null)
   const [draft, setDraft] = useState('')
+  const [mentions, setMentions] = useState([])
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
   const [confirming, setConfirming] = useState(null)
   const end = useRef(null)
+
+  const mentionMatch = useMemo(() => {
+    const m = draft.match(/(?:^|[^a-zA-Z0-9_.])@([a-zA-Z0-9_.]{0,24})$/)
+    return m ? m[1].toLowerCase() : null
+  }, [draft])
+
+  useEffect(() => {
+    if (mentionMatch === null) { setMentions([]); return }
+    const t = setTimeout(() => {
+      api.searchProfiles(mentionMatch, me.id).then((rows) => setMentions(rows.slice(0, 6))).catch(() => setMentions([]))
+    }, 180)
+    return () => clearTimeout(t)
+  }, [mentionMatch, me.id])
+
+  const insertMention = (handle) => {
+    setDraft((d) => d.replace(/@[a-zA-Z0-9_.]{0,24}$/, `@${handle} `))
+    setMentions([])
+  }
 
   const load = useCallback(async () => {
     try {
@@ -351,7 +450,7 @@ function Comments({ photo, batch, me, isOwner, panel, onClose, onCount, onReport
                   {c.author ? <Link to={`/app/u/${c.author.handle}`}><b>{c.author.display_name}</b></Link> : <b>Someone</b>}
                   <span className="meta">{relative(c.created_at)}</span>
                 </p>
-                <p className="comment-text">{c.body}</p>
+                <p className="comment-text"><MentionText text={c.body} /></p>
               </div>
               <Menu label="Comment actions" items={[
                 (mine || isOwner) && { label: 'Delete', icon: 'trash', destructive: true, onClick: () => setConfirming(c) },
@@ -363,8 +462,17 @@ function Comments({ photo, batch, me, isOwner, panel, onClose, onCount, onReport
         <div ref={end} />
       </div>
       {problem && <p className="problem">{problem}</p>}
+      {mentions.length > 0 && (
+        <div className="mention-suggestions" role="listbox" aria-label="Mention someone">
+          {mentions.map((u) => (
+            <button key={u.id} type="button" className="mention-chip" onClick={() => insertMention(u.handle)}>
+              <Avatar user={u} size={20} /><span>@{u.handle}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <form className="composer" onSubmit={post}>
-        <textarea rows={1} placeholder="Add a comment" value={draft} maxLength={api.commentLimit} aria-label="Comment"
+        <textarea rows={1} placeholder="Add a comment · @ to mention" value={draft} maxLength={api.commentLimit} aria-label="Comment"
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) post(e) }} />
         <button className="round accent" disabled={!draft.trim() || busy} aria-label="Post comment"><Icon name="send" /></button>
@@ -392,6 +500,127 @@ function Comments({ photo, batch, me, isOwner, panel, onClose, onCount, onReport
     )
   }
   return <Sheet title="Comments" onClose={onClose} className="comments-sheet">{body}</Sheet>
+}
+
+function TagsSheet({ photo, me, blocked, canManage, tags, onClose, onChange }) {
+  const [pin, setPin] = useState(null)
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState([])
+  const [busyID, setBusyID] = useState(null)
+  const [problem, setProblem] = useState('')
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (!canManage) return
+    const t = setTimeout(() => {
+      api.searchProfiles(q, me.id)
+        .then((rows) => setResults(rows.filter((u) => !blocked.has(u.id))))
+        .catch(() => setResults([]))
+    }, q ? 180 : 0)
+    return () => clearTimeout(t)
+  }, [q, me.id, canManage, blocked])
+
+  const taggedIDs = new Set(tags.map((t) => t.user_id))
+  const candidates = [me, ...results].filter((u) => u && !taggedIDs.has(u.id) && (
+    !q.trim() || u.handle.includes(q.trim().replace(/^@/, '').toLowerCase()) || u.display_name.toLowerCase().includes(q.trim().toLowerCase())
+  ))
+
+  const placePin = (e) => {
+    if (!canManage) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    const x = Math.min(0.96, Math.max(0.04, (e.clientX - rect.left) / rect.width))
+    const y = Math.min(0.96, Math.max(0.04, (e.clientY - rect.top) / rect.height))
+    setPin({ x, y })
+    inputRef.current?.focus()
+  }
+
+  const add = async (user) => {
+    setBusyID(user.id); setProblem('')
+    try {
+      const saved = await api.setTag({ photoID: photo.id, userID: user.id, x: pin?.x ?? null, y: pin?.y ?? null, me: me.id })
+      onChange([...tags.filter((t) => t.user_id !== user.id), saved])
+      setPin(null)
+      setQ('')
+    } catch (err) {
+      setProblem(err.message)
+    } finally {
+      setBusyID(null)
+    }
+  }
+
+  const remove = async (tag) => {
+    setBusyID(tag.user_id); setProblem('')
+    try {
+      await api.removeTag(photo.id, tag.user_id)
+      onChange(tags.filter((t) => t.user_id !== tag.user_id))
+    } catch (err) {
+      setProblem(err.message)
+    } finally {
+      setBusyID(null)
+    }
+  }
+
+  return (
+    <Sheet title={canManage ? 'Tag people' : 'In this photo'} onClose={onClose} className="tags-sheet">
+      <div className={`tags-preview ${canManage ? 'tappable' : ''}`} onClick={placePin}>
+        <Photo photo={photo} tier="m" eager />
+        {tags.map((t) => t.x != null && t.y != null && (
+          <Link key={t.user_id} className="tag-pin" to={t.user ? `/app/u/${t.user.handle}` : '#'}
+                onClick={(e) => { e.stopPropagation(); onClose() }}
+                style={{ left: `${Math.min(92, Math.max(8, t.x * 100))}%`, top: `${Math.min(92, Math.max(8, t.y * 100))}%` }}>
+            @{t.user?.handle ?? 'tagged'}
+          </Link>
+        ))}
+        {pin && <span className="tag-pin-dot" style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }} />}
+      </div>
+      {canManage && (
+        <div className="tags-hint">
+          <span className="meta">{pin ? 'Pin placed — pick who is there below.' : 'Click anywhere on the photo to place a pin, or choose someone below.'}</span>
+          {pin && <button type="button" className="link" onClick={() => setPin(null)}>Clear pin</button>}
+        </div>
+      )}
+      {problem && <p className="problem">{problem}</p>}
+      {tags.length > 0 && (
+        <ul className="people compact">
+          {tags.map((t) => {
+            const canRemove = canManage || t.user_id === me.id || t.tagged_by === me.id
+            return (
+              <li key={t.user_id}>
+                <Link to={t.user ? `/app/u/${t.user.handle}` : '#'} className="byline" onNavigate={onClose}>
+                  <Avatar user={t.user} size={34} />
+                  <span className="who"><b>{t.user?.display_name ?? 'Someone'}</b><span className="meta">@{t.user?.handle ?? ''}</span></span>
+                </Link>
+                {canRemove && (
+                  <button className="secondary" disabled={busyID === t.user_id} onClick={() => remove(t)}>
+                    {t.user_id === me.id && !canManage ? 'Remove me' : 'Remove'}
+                  </button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {!canManage && !tags.length && <p className="meta empty-note">Nobody is tagged in this photo.</p>}
+      {canManage && (
+        <div className="tags-picker">
+          <input ref={inputRef} type="search" placeholder="Search name or @handle" value={q}
+                 onChange={(e) => setQ(e.target.value)} aria-label="Search people to tag" />
+          <ul className="people compact">
+            {candidates.slice(0, 10).map((u) => (
+              <li key={u.id}>
+                <span className="byline">
+                  <Avatar user={u} size={34} />
+                  <span className="who"><b>{u.display_name}</b><span className="meta">@{u.handle}</span></span>
+                </span>
+                <button className="primary" disabled={busyID !== null} onClick={() => add(u)}>Tag</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Sheet>
+  )
 }
 
 function ReportSheet({ target, onClose, onSent }) {

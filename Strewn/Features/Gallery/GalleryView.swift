@@ -30,6 +30,7 @@ struct GalleryView: View {
     /// Likes and comment counts by photo; nil while loading, or when they can't be loaded.
     @State private var reactions: [UUID: PhotoReactions]?
     @State private var commentsPhoto: Photo?
+    @State private var tagsPhoto: Photo?
     @State private var arrangingBoard = false
     @State private var reporting: ReportTarget?
     @State private var confirmingBlock = false
@@ -64,6 +65,10 @@ struct GalleryView: View {
                             if frame.kind == .filmStrip {
                                 FilmRollView(collection: collection, namespace: namespace,
                                              availableHeight: geo.size.height - 60, width: geo.size.width,
+                                             reactions: reactions,
+                                             onLike: { like($0) },
+                                             onComments: { commentsPhoto = $0 },
+                                             onTags: { tagsPhoto = $0 },
                                              onView: { viewerPhoto = $0 })
                             } else if collection.showsBoard {
                                 boardCanvas(width: geo.size.width)
@@ -130,6 +135,13 @@ struct GalleryView: View {
             PhotoCommentsSheet(photo: photo, collection: collection) { setCommentCount($0, for: photo) }
                 .presentationDetents([.medium, .large])
         }
+        .sheet(item: $tagsPhoto) { photo in
+            PhotoTagsSheet(photo: photo, collection: collection, canManageTags: canTag(photo),
+                           initialTags: reactions?[photo.id]?.tags ?? [],
+                           onOpenUser: { openPerson($0) },
+                           onTagsChange: { setTags($0, for: photo) })
+                .presentationDetents([.medium, .large])
+        }
         .fullScreenCover(isPresented: $arrangingBoard) {
             BoardEditorView(collection: collection) { model.setBoard($0, for: collection.id) }
         }
@@ -151,7 +163,16 @@ struct GalleryView: View {
                             reactions: reactions,
                             onLike: reactions == nil ? nil : { like($0) },
                             commentsBatch: reactions == nil ? nil : collection,
-                            onCommentCount: { setCommentCount($1, for: $0) })
+                            canTag: canTag(photo),
+                            onOpenUser: { user in
+                                viewerPhoto = nil
+                                Task {
+                                    try? await Task.sleep(for: .milliseconds(350))
+                                    openPerson(user)
+                                }
+                            },
+                            onCommentCount: { setCommentCount($1, for: $0) },
+                            onTagsChange: { setTags($1, for: $0) })
         }
         .sheet(item: $reporting) { target in
             ReportSheet(subject: target.subject, report: target.report, owner: target.owner)
@@ -225,7 +246,9 @@ struct GalleryView: View {
                 // Two columns are a contact sheet: the prints alone read better.
                 if frame.layout == .single {
                     PhotoMetaRow(collection: collection, photo: photo, index: index, reactions: reactions?[photo.id],
-                                 onLike: { like(photo) }, onComments: { commentsPhoto = photo })
+                                 canTag: canTag(photo),
+                                 onLike: { like(photo) }, onComments: { commentsPhoto = photo },
+                                 onTags: { tagsPhoto = photo })
                         .opacity(appeared ? 1 : 0)
                 }
             }
@@ -265,6 +288,9 @@ struct GalleryView: View {
         if let mine = reactions?[photo.id] {
             Button(mine.likedByMe ? "Unlike" : "Like", systemImage: mine.likedByMe ? "heart.slash" : "heart") { like(photo) }
             Button("Comments", systemImage: "bubble.left") { commentsPhoto = photo }
+            if canTag(photo) || !mine.tags.isEmpty {
+                Button(canTag(photo) ? "Tag people" : "Tagged people", systemImage: "tag") { tagsPhoto = photo }
+            }
         }
         if canEdit(photo) {
             Button("Edit", systemImage: "slider.horizontal.3") { editingPhoto = photo }
@@ -533,6 +559,19 @@ struct GalleryView: View {
         isOwner || (photo.addedBy != nil && photo.addedBy == model.me?.id)
     }
 
+    /// The batch owner or the contributor who added this photo can tag people on it.
+    private func canTag(_ photo: Photo) -> Bool {
+        isOwner || (collection.canAdd && photo.addedBy != nil && photo.addedBy == model.me?.id)
+    }
+
+    private func openPerson(_ user: User) {
+        if let onOpenOwner {
+            onOpenOwner(user)
+        } else {
+            model.linkedUser = user
+        }
+    }
+
     /// Anyone's photo but your own can be reported, in your batch or theirs.
     private func canReport(_ photo: Photo) -> Bool {
         guard let me = model.me?.id else { return false }
@@ -622,17 +661,23 @@ struct GalleryView: View {
     private func setCommentCount(_ count: Int, for photo: Photo) {
         reactions?[photo.id]?.commentCount = count
     }
+
+    private func setTags(_ tags: [PhotoTag], for photo: Photo) {
+        reactions?[photo.id]?.tags = tags
+    }
 }
 
 /// The line under a print: its frame number and what's known about it, a star on the cover, and
-/// its likes and comments, which you can tap without opening the photo.
+/// its likes, comments and tagged people, which you can tap without opening the photo.
 struct PhotoMetaRow: View {
     let collection: PhotoCollection
     let photo: Photo
     let index: Int
     var reactions: PhotoReactions? = nil
+    var canTag = false
     var onLike: (() -> Void)? = nil
     var onComments: (() -> Void)? = nil
+    var onTags: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 8) {
@@ -643,6 +688,19 @@ struct PhotoMetaRow: View {
                     .foregroundStyle(Color.strewnAccent)
                     .labelStyle(TightLabel())
                     .transition(.scale.combined(with: .opacity))
+            }
+            if let tags = reactions?.tags, !tags.isEmpty, let onTags {
+                Button(action: onTags) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "tag.fill").font(.system(size: 10, weight: .semibold))
+                        Text(tagSummary(tags)).font(.caption2.weight(.semibold)).lineLimit(1)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(.foreground.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Tagged: \(tagSummary(tags))")
             }
             Spacer(minLength: 4)
             if let adder = collection.adder(of: photo) {
@@ -655,6 +713,10 @@ struct PhotoMetaRow: View {
             }
             if let reactions {
                 HStack(spacing: 2) {
+                    if canTag && reactions.tags.isEmpty, let onTags {
+                        reaction(0, "tag", on: false, action: onTags)
+                            .accessibilityLabel("Tag people")
+                    }
                     reaction(reactions.likeCount, reactions.likedByMe ? "heart.fill" : "heart", on: reactions.likedByMe, action: onLike)
                         .sensoryFeedback(.impact(weight: .light), trigger: reactions.likedByMe)
                         .accessibilityLabel(reactions.likedByMe ? "Unlike, \(reactions.likeCount.counted("like"))" : "Like, \(reactions.likeCount.counted("like"))")
@@ -665,6 +727,12 @@ struct PhotoMetaRow: View {
         }
         .padding(.leading, 4)
         .animation(.snappy, value: collection.coverPhotoID)
+    }
+
+    private func tagSummary(_ tags: [PhotoTag]) -> String {
+        let names = tags.compactMap { $0.user.map { "@\($0.handle)" } }
+        guard let first = names.first else { return tags.count.counted("person", plural: "people") }
+        return tags.count > 1 ? "\(first) +\(tags.count - 1)" : first
     }
 
     private func reaction(_ count: Int, _ symbol: String, on: Bool, action: (() -> Void)?) -> some View {

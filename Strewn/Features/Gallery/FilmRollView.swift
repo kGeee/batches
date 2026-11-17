@@ -11,7 +11,13 @@ struct FilmRollView: View {
     let namespace: Namespace.ID
     let availableHeight: CGFloat
     let width: CGFloat
+    var reactions: [UUID: PhotoReactions]? = nil
+    var onLike: ((Photo) -> Void)? = nil
+    var onComments: ((Photo) -> Void)? = nil
+    var onTags: ((Photo) -> Void)? = nil
     var onView: (Photo) -> Void
+
+    @Environment(AppModel.self) private var model
 
     private var border: CGFloat { collection.frame.borderWidth }
     private var band: CGFloat { border * 1.1 + 22 }
@@ -20,12 +26,19 @@ struct FilmRollView: View {
     var body: some View {
         let pileFrames = FilmRollLayout.frames(for: collection).map(\.id)
         let maxFrameHeight = availableHeight - 110          // leave room for the caption
+        let isOwner = collection.ownerID == model.me?.id
         return LazyVStack(spacing: max(14, border * 0.8)) {
             ForEach(Array(collection.photos.enumerated()), id: \.element.id) { index, photo in
+                let canTag = isOwner || (collection.canAdd && photo.addedBy != nil && photo.addedBy == model.me?.id)
                 VStack(spacing: 6) {
                     frame(photo, pileIndex: pileFrames.firstIndex(of: photo.id))
                         .frame(maxHeight: maxFrameHeight)
-                    PhotoMetaRow(collection: collection, photo: photo, index: index)
+                    PhotoMetaRow(collection: collection, photo: photo, index: index,
+                                 reactions: reactions?[photo.id],
+                                 canTag: canTag,
+                                 onLike: onLike.map { fn in { fn(photo) } },
+                                 onComments: onComments.map { fn in { fn(photo) } },
+                                 onTags: onTags.map { fn in { fn(photo) } })
                         .foregroundStyle(Color.filmEdge)
                         .environment(\.colorScheme, .dark)
                 }

@@ -327,25 +327,54 @@ extension PhotoCollection {
     }
 }
 
-/// Likes and comments on one photo, as the signed-in person sees them: people on the other side of
-/// a block aren't counted.
+/// Likes, comments and tagged people on one photo, as the signed-in person sees them: people on the
+/// other side of a block aren't counted.
 struct PhotoReactions: Hashable {
     var likeCount = 0
     var likedByMe = false
     var commentCount = 0
+    var tags: [PhotoTag] = []
 }
 
-/// Something someone else did to one of your photos: a like or a comment. Shown on the desk and
-/// under Friends › Activity.
+/// Someone tagged on a photo, optionally pinned at a normalized point (0...1 from top-left) on the
+/// full-frame image.
+struct PhotoTag: Identifiable, Hashable, Sendable {
+    var id: String { "\(photoID.uuidString.lowercased())-\(userID.uuidString.lowercased())" }
+    let photoID: UUID
+    let userID: UUID
+    var user: User?
+    let taggedBy: UUID
+    var x: Double?
+    var y: Double?
+    let createdAt: Date
+
+    var hasPosition: Bool { x != nil && y != nil }
+}
+
+/// A notification for the signed-in person: likes, comments, @handle mentions, photo tags, shared
+/// batches, contributed photos and new followers. Shown on the desk and under Friends › Activity.
 struct ActivityItem: Identifiable, Hashable, Sendable {
-    enum Kind: Hashable, Sendable { case like, comment(String) }
+    enum Kind: Hashable, Sendable {
+        case like
+        case comment(String)
+        case mention(String)
+        case tag
+        case batchShared(canAdd: Bool)
+        case photoAdded(count: Int)
+        case follow
+    }
     let id: String
     let kind: Kind
     let actor: User?
     let actorID: UUID
-    let photoID: UUID
+    var collectionID: UUID? = nil
+    var batchTitle: String? = nil
+    var photoID: UUID? = nil
+    var commentID: UUID? = nil
+    var readAt: Date? = nil
     let at: Date
 
+    var isUnread: Bool { readAt == nil }
     var isLike: Bool { kind == .like }
 }
 

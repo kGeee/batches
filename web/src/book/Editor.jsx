@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon, Photo, Sheet } from '../ui.jsx'
 import { fontFamily } from '../look.js'
-import { frameKinds, frameTitles, isLeftPage, printBox, spreadIndexOf, spreadsOf } from './format.js'
+import { frameKinds, frameTitles, isLeftPage, printBox, safeMargin, spreadIndexOf, spreadsOf } from './format.js'
+import { snapAxis } from './layout.js'
 import {
   addPhoto, addText, applyLayout, backgrounds, bookFonts, bringToFront, chapterOf, layoutChoices, pageIndex, pageOf,
   personName, removeItem, setBackground, setFrame, swapPhoto, updateItem, usedPhotoIDs,
@@ -13,8 +14,29 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 const photoType = 'application/x-batches-photo'
 const typing = (el) => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
 
-/** Dragging items: move, resize from a corner, or turn. One gesture is one undo step. */
-function useGestures(apply) {
+const snapPixels = 6
+
+/** Edges and centres of everything else on the page, and the page's own lines, in page units. */
+function snapTargets(pageEl, itemEl, format) {
+  const page = pageEl.getBoundingClientRect()
+  const m = safeMargin(format)
+  const xs = [0.5, m, 1 - m], ys = [0.5, m, 1 - m]
+  for (const el of pageEl.querySelectorAll('.bitem')) {
+    if (el === itemEl) continue
+    const r = el.getBoundingClientRect()
+    const l = (r.left - page.left) / page.width, t = (r.top - page.top) / page.width
+    const w = r.width / page.width, h = r.height / page.width
+    xs.push(l, l + w / 2, l + w)
+    ys.push(t, t + h / 2, t + h)
+  }
+  return { xs, ys }
+}
+
+/**
+ * Dragging items: move, resize from a corner, or turn. One gesture is one undo step. Moving snaps
+ * to the page and to other items, showing the lines it snapped to; hold Alt to place freely.
+ */
+function useGestures(apply, format, setGuides) {
   return useCallback((e, { pageID, item, mode, left }) => {
     if (e.button !== 0) return
     e.preventDefault()
@@ -27,13 +49,24 @@ function useGestures(apply) {
     const cx = ir.left + ir.width / 2, cy = ir.top + ir.height / 2
     const sx = e.clientX, sy = e.clientY
     const key = `${mode}:${item.id}:${performance.now()}`
+    const pr = pageEl.getBoundingClientRect()
+    const targets = mode === 'move' ? snapTargets(pageEl, itemEl, format) : null
+    const box = { cx: (cx - pr.left) / unit, cy: (cy - pr.top) / unit, hw: ir.width / 2 / unit, hh: ir.height / 2 / unit }
     let moved = false
     const move = (ev) => {
       if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return
       moved = true
       let patch
       if (mode === 'move') {
-        patch = { x: clamp(item.x + (ev.clientX - sx) / unit, -0.4, left ? 2.4 : 1.4), y: clamp(item.y + (ev.clientY - sy) / unit, -0.4, 1.4) }
+        let dx = (ev.clientX - sx) / unit, dy = (ev.clientY - sy) / unit
+        if (!ev.altKey) {
+          const sx2 = snapAxis(box.cx + dx, box.hw, targets.xs, snapPixels / unit)
+          const sy2 = snapAxis(box.cy + dy, box.hh, targets.ys, snapPixels / unit)
+          dx += sx2.delta
+          dy += sy2.delta
+          setGuides(sx2.lines.length || sy2.lines.length ? { page: pageID, xs: sx2.lines, ys: sy2.lines } : null)
+        } else setGuides(null)
+        patch = { x: clamp(item.x + dx, -0.4, left ? 2.4 : 1.4), y: clamp(item.y + dy, -0.4, 1.4) }
       } else if (mode === 'turn') {
         const a = Math.atan2(ev.clientY - cy, ev.clientX - cx) - Math.atan2(sy - cy, sx - cx)
         let r = item.rotation + (a * 180) / Math.PI
@@ -45,10 +78,10 @@ function useGestures(apply) {
       }
       apply((d) => updateItem(d, pageID, item.id, patch, { free: item.kind === 'photo' }), key)
     }
-    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    const up = () => { setGuides(null); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-  }, [apply])
+  }, [apply, format, setGuides])
 }
 
 export function Editor({ bag }) {
@@ -59,7 +92,10 @@ export function Editor({ bag }) {
   const [layoutFor, setLayoutFor] = useState(null)
   const [editing, setEditing] = useState(null)
   const [dropOn, setDropOn] = useState(null)
-  const gesture = useGestures(apply)
+  const [guides, setGuides] = useState(null)
+  const [showSafe, setShowSafe] = useState(() => localStorage.getItem('book.safeArea') === '1')
+  const toggleSafe = () => setShowSafe((on) => { localStorage.setItem('book.safeArea', on ? '0' : '1'); return !on })
+  const gesture = useGestures(apply, format, setGuides)
 
   const spreads = useMemo(() => spreadsOf(doc.pages.map((_, i) => i)), [doc.pages])
   const s = clamp(spread, 0, spreads.length - 1)
@@ -116,6 +152,8 @@ export function Editor({ bag }) {
     return {
       selected: sel.page === page.id ? sel.items : [],
       handles,
+      showSafe,
+      guides: guides?.page === page.id ? guides : null,
       className: dropOn === page.id ? 'dropping' : '',
       onPageDown: (e) => { if (e.target.closest('.bitem')) return; setActive(page.id); setSel({ page: null, items: [] }) },
       onItemDown: (e, item) => {
@@ -162,6 +200,8 @@ export function Editor({ bag }) {
           {chaptersWithPages.map(({ c, first }) => (
             <button key={c.id} className={current === c.id ? 'on' : ''} onClick={() => go(spreadIndexOf(first))} style={{ fontFamily: fontFamily(c.font) }}>{c.title || 'Untitled'}</button>
           ))}
+          <span className="spacer" />
+          <button className={`toggle ${showSafe ? 'on' : ''}`} aria-pressed={showSafe} onClick={toggleSafe} title="Show the safe area and centre lines">Guides</button>
         </nav>
         <div className="spreadarea">
           <div>
@@ -185,7 +225,7 @@ export function Editor({ bag }) {
       <Tray doc={doc} batches={batches} photos={photos} me={me} swapping={swapping} onPick={pick} activePage={pageIndex(doc, activeID)} />
       {layoutFor && <LayoutSheet bag={bag} pageID={layoutFor} onClose={() => setLayoutFor(null)} />}
       {editing && (
-        <PageEditor bag={bag} pageID={editing} onClose={() => setEditing(null)} pageProps={pageProps} sel={sel} setSel={setSel}
+        <PageEditor bag={bag} pageID={editing} onClose={() => setEditing(null)} pageProps={pageProps} sel={sel} setSel={setSel} showSafe={showSafe} toggleSafe={toggleSafe}
                     swapping={swapping} setSwapping={setSwapping} onLayout={setLayoutFor} onRemove={removeSelected} onPick={pick}
                     onMove={(id) => { setEditing(id); setActive(id); setSel({ page: null, items: [] }); setSpread(spreadIndexOf(pageIndex(doc, id))) }} />
       )}
@@ -335,7 +375,7 @@ function LayoutSheet({ bag, pageID, onClose }) {
   )
 }
 
-function PageEditor({ bag, pageID, onClose, pageProps, sel, setSel, swapping, setSwapping, onLayout, onRemove, onMove, onPick }) {
+function PageEditor({ bag, pageID, onClose, pageProps, sel, setSel, swapping, setSwapping, onLayout, onRemove, onMove, onPick, showSafe, toggleSafe }) {
   const { doc } = bag
   const index = pageIndex(doc, pageID)
   useEffect(() => {
@@ -353,7 +393,8 @@ function PageEditor({ bag, pageID, onClose, pageProps, sel, setSel, swapping, se
         <b>Page {index + 1}</b>
         <button className="round" disabled={index === doc.pages.length - 1} onClick={() => onMove(doc.pages[index + 1].id)} aria-label="Next page"><Icon name="forward" /></button>
         <span className="spacer" />
-        <span className="meta light">Drag to move · corners to resize · the dot to turn · Shift-click to pick several</span>
+        <span className="meta light">Drag to move (snaps; hold Alt to place freely) · corners to resize · the dot to turn · Shift-click to pick several</span>
+        <button className={`secondary small toggle ${showSafe ? 'on' : ''}`} aria-pressed={showSafe} onClick={toggleSafe}>Guides</button>
         <button className="primary small" onClick={onClose}>Done</button>
       </div>
       <div className="pageeditor-page" onPointerDown={(e) => { if (e.target === e.currentTarget) setSel({ page: null, items: [] }) }}>

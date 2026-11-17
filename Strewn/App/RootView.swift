@@ -21,6 +21,7 @@ struct RootView: View {
         .readsWindowLayout()
         .onOpenURL { url in Task { await model.open(url) } }
         .fullScreenCover(item: $model.linkedPile) { LinkedPileView(pile: $0) }
+        .sheet(item: $model.linkedUser) { LinkedUserSheet(user: $0) }
         .alert("Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } })) {
@@ -114,6 +115,12 @@ private struct SignedInTabs: View {
         .onChange(of: chrome.tab) { _, tab in
             if tab == .shoot, camera == nil { camera = CameraModel() }
         }
+        .onChange(of: model.wantsActivityTab) { _, wanted in
+            guard wanted else { return }
+            model.wantsActivityTab = false
+            chrome.showsActivity = true
+            chrome.tab = .friends
+        }
         // The bar would otherwise ride up on top of the keyboard.
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
@@ -206,5 +213,24 @@ private struct LinkedPileView: View {
     var body: some View {
         GalleryView(collection: pile, namespace: space, isOwner: pile.ownerID == model.me?.id,
                     startPhotoID: model.linkedPhotoID) { dismiss() }
+    }
+}
+
+private struct LinkedUserSheet: View {
+    let user: User
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ProfileView(user: user)
+                .navigationDestination(for: User.self) { ProfileView(user: $0) }
+                .navigationDestination(for: FollowListRoute.self) { FollowListView(route: $0) }
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }.fontWeight(.semibold)
+                    }
+                }
+        }
+        .tint(.strewnAccent)
     }
 }

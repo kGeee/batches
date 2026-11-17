@@ -40,6 +40,9 @@ targets:
         # Opens batches.space/b/... links in the app. The site serves the matching
         # site/.well-known/apple-app-site-association.
         com.apple.developer.associated-domains: ["applinks:batches.space"]
+        # Push notifications. Archives exported for TestFlight / the App Store are re-signed as
+        # "production" automatically; builds run from Xcode use the sandbox APNs server.
+        aps-environment: development
     settings:
       groups: [metalKernels, signing]
       base:

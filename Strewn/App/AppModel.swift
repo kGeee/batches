@@ -18,14 +18,19 @@ final class AppModel {
     private(set) var desk = DeskLayout()
     /// Likes and comments added up per batch, for your shared batches and the feed.
     private(set) var batchTotals: [UUID: PhotoReactions] = [:]
-    /// Likes and comments other people left on your photos, newest first.
+    /// Notifications for the signed-in person, newest first.
     private(set) var activity: [ActivityItem] = []
-    /// Activity newer than this hasn't been looked at yet.
+    /// Activity newer than this hasn't been looked at yet (local fallback when read_at isn't set).
     private(set) var activitySeenAt = Date.distantPast
-    /// A pile opened from a strewn://pile link.
+    /// A pile opened from a strewn://pile link or notification.
     var linkedPile: PhotoCollection?
     /// The photo a strewn://pile link pointed at, opened inside linkedPile.
     var linkedPhotoID: UUID?
+    /// A person's profile opened from a strewn://u/<handle> link or notification.
+    var linkedUser: User?
+    /// Set when a notification asks to open the Notifications tab directly.
+    var wantsActivityTab = false
+    var push: PushNotifications?
     var errorMessage: String?
 
     private let backend: Backend
@@ -33,6 +38,8 @@ final class AppModel {
     /// Goes up with every change to the desk, so a slower load can't undo a newer change.
     @ObservationIgnored private var deskRevision = 0
     @ObservationIgnored private var deskLoadedFor: UUID?
+    @ObservationIgnored private var deliveredNotificationIDs: Set<String> = []
+    @ObservationIgnored private var initialActivityLoaded = false
 
     init(backend: Backend) { self.backend = backend }
 
@@ -89,6 +96,10 @@ final class AppModel {
     }
 
     func signOut() async {
+        if let token = await push?.clearCurrentToken() {
+            try? await backend.unregisterDeviceToken(token)
+        }
+        push?.updateBadgeCount(0)
         try? await backend.signOut()
         clearSession()
     }
@@ -112,6 +123,8 @@ final class AppModel {
         batchTotals = [:]
         activity = []
         activitySeenAt = .distantPast
+        deliveredNotificationIDs = []
+        initialActivityLoaded = false
         desk = DeskLayout()
         deskLoadedFor = nil
         auth = .signedOut
@@ -123,6 +136,7 @@ final class AppModel {
             me = user
             activitySeenAt = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: Self.activityKey(user.id)))
             auth = .signedIn
+            await push?.syncStoredTokenIfNeeded()
             await refresh()
         } catch {
             errorMessage = error.localizedDescription
@@ -155,12 +169,18 @@ final class AppModel {
         await refreshSocial()
     }
 
-    // MARK: Activity
+    // MARK: Activity and notifications
 
-    var unseenActivity: [ActivityItem] { activity.filter { $0.at > activitySeenAt } }
+    var unseenActivity: [ActivityItem] {
+        activity.filter { $0.readAt == nil && $0.at > activitySeenAt }
+    }
 
-    /// Reloads the like and comment totals for batches, and what people did to your photos.
-    /// Quietly keeps what it had if the server can't be reached or doesn't have the tables yet.
+    func isUnread(_ item: ActivityItem) -> Bool {
+        item.readAt == nil && item.at > activitySeenAt
+    }
+
+    /// Reloads the like, comment and tag totals for batches, and notifications for the signed-in
+    /// person. Falls back to photo likes and comments if the notifications table hasn't migrated yet.
     func refreshSocial() async {
         guard let me else { return }
         let shared = myCollections.filter(\.isShared)
@@ -174,36 +194,91 @@ final class AppModel {
         var totals: [UUID: PhotoReactions] = [:]
         for pile in piles {
             var sum = PhotoReactions()
+            var seenTagged: Set<UUID> = []
             for photo in pile.photos {
                 guard let one = byPhoto[photo.id] else { continue }
                 sum.likeCount += one.likeCount
                 sum.commentCount += one.commentCount
                 sum.likedByMe = sum.likedByMe || one.likedByMe
+                for tag in one.tags where seenTagged.insert(tag.userID).inserted {
+                    sum.tags.append(tag)
+                }
             }
             totals[pile.id] = sum
         }
         batchTotals = totals
 
-        // Your photos: everything in your shared batches, and what you added to friends' batches.
-        let mine = shared.flatMap { $0.photos.map(\.id) } + feed.flatMap { $0.photos.filter { $0.addedBy == me.id }.map(\.id) }
         let hidden = Set(blocked.map(\.id))
+        if let fetched = try? await backend.notifications(limit: 80) {
+            let filtered = fetched.filter { !hidden.contains($0.actorID) }
+            if initialActivityLoaded {
+                for item in filtered where isUnread(item) && deliveredNotificationIDs.insert(item.id).inserted {
+                    push?.deliverLocalBannerIfNeeded(for: item)
+                }
+            } else {
+                deliveredNotificationIDs.formUnion(filtered.map(\.id))
+                initialActivityLoaded = true
+            }
+            activity = filtered
+            push?.updateBadgeCount(unseenActivity.count)
+            return
+        }
+
+        // Fallback before the notifications table exists: likes and comments on your photos.
+        let mine = shared.flatMap { $0.photos.map(\.id) } + feed.flatMap { $0.photos.filter { $0.addedBy == me.id }.map(\.id) }
         var items: [ActivityItem] = []
         for chunk in mine.chunked(100) {
             guard let part = try? await backend.activity(on: chunk, limit: 40) else { return }
             items += part
         }
         activity = Array(items.filter { !hidden.contains($0.actorID) }.sorted { $0.at > $1.at }.prefix(60))
+        initialActivityLoaded = true
+        push?.updateBadgeCount(unseenActivity.count)
     }
 
     func markActivitySeen() {
-        guard let me, !unseenActivity.isEmpty else { return }
-        activitySeenAt = .now
-        UserDefaults.standard.set(activitySeenAt.timeIntervalSince1970, forKey: Self.activityKey(me.id))
+        guard let me else { return }
+        let unreadIDs = unseenActivity.map(\.id)
+        guard !unreadIDs.isEmpty else { return }
+        let now = Date.now
+        activitySeenAt = now
+        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: Self.activityKey(me.id))
+        for i in activity.indices where activity[i].readAt == nil {
+            activity[i].readAt = now
+        }
+        push?.updateBadgeCount(0)
+        Task { try? await backend.markNotificationsRead(unreadIDs) }
+    }
+
+    func markNotificationRead(_ id: String) {
+        let now = Date.now
+        if let index = activity.firstIndex(where: { $0.id == id }), activity[index].readAt == nil {
+            activity[index].readAt = now
+            push?.updateBadgeCount(unseenActivity.count)
+        }
+        Task { try? await backend.markNotificationsRead([id]) }
+    }
+
+    func registerDeviceToken(_ token: String, environment: String) async {
+        guard auth == .signedIn else { return }
+        try? await backend.registerDeviceToken(token, environment: environment)
+    }
+
+    func collection(id: UUID) async -> PhotoCollection? {
+        if let localPile = (myCollections + feed).first(where: { $0.id == id }) { return localPile }
+        return (try? await backend.collection(id: id)).map { local.merge([$0]).first ?? $0 }
     }
 
     /// The batch a photo is in, among yours and the feed's.
     func batch(containing photoID: UUID) -> PhotoCollection? {
         (myCollections + feed).first { $0.photos.contains { $0.id == photoID } }
+    }
+
+    /// Batches where `user` is tagged in at least one visible photo.
+    func taggedPiles(of user: User) async -> [PhotoCollection] {
+        let ids = Set(blocked.map(\.id))
+        let rows = (try? await backend.taggedCollections(for: user.id)) ?? []
+        return local.merge(rows.filter { !ids.contains($0.ownerID) })
     }
 
     private static func activityKey(_ id: UUID) -> String { "strewn.activitySeen.\(id.uuidString.lowercased())" }
@@ -217,6 +292,12 @@ final class AppModel {
 
     func profile(_ id: UUID) async -> User? {
         try? await backend.profile(id: id)
+    }
+
+    func profile(handle: String) async -> User? {
+        guard let user = try? await backend.profile(handle: handle.lowercased()),
+              !isBlocked(user) else { return nil }
+        return user
     }
 
     /// Piles of someone else that you're allowed to see.
@@ -399,13 +480,20 @@ final class AppModel {
         switch url.host() {
         case "pile":
             guard let id = parts.first.flatMap(UUID.init(uuidString:)) else { return }
-            if let pile = try? await backend.collection(id: id) {
+            if let pile = await collection(id: id) {
                 linkedPhotoID = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                     .queryItems?.first { $0.name == "photo" }?.value.flatMap(UUID.init(uuidString:))
                 linkedPile = pile
             } else {
                 errorMessage = "That batch is private or was deleted."
             }
+        case "u":
+            guard let handle = parts.first, !handle.isEmpty else { return }
+            if let user = await profile(handle: handle) {
+                linkedUser = user
+            }
+        case "notifications", "activity":
+            wantsActivityTab = true
         default:
             break
         }
@@ -429,15 +517,20 @@ final class AppModel {
     static func appLink(fromWeb url: URL) -> URL? {
         guard url.scheme == "https", let host = url.host(), host == webHost || host == "www.\(webHost)" else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
-        guard parts.count == 2, parts[0] == "b", let id = UUID(uuidString: parts[1]) else { return nil }
-        var app = URLComponents()
-        app.scheme = "strewn"
-        app.host = "pile"
-        app.path = "/" + id.uuidString.lowercased()
-        let photo = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first { $0.name == "photo" }?.value.flatMap(UUID.init(uuidString:))
-        if let photo { app.queryItems = [URLQueryItem(name: "photo", value: photo.uuidString.lowercased())] }
-        return app.url
+        if parts.count == 2, parts[0] == "b", let id = UUID(uuidString: parts[1]) {
+            var app = URLComponents()
+            app.scheme = "strewn"
+            app.host = "pile"
+            app.path = "/" + id.uuidString.lowercased()
+            let photo = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first { $0.name == "photo" }?.value.flatMap(UUID.init(uuidString:))
+            if let photo { app.queryItems = [URLQueryItem(name: "photo", value: photo.uuidString.lowercased())] }
+            return app.url
+        }
+        if parts.count == 3, parts[0] == "app", parts[1] == "u", !parts[2].isEmpty {
+            return URL(string: "strewn://u/\(parts[2].lowercased())")
+        }
+        return nil
     }
 
     func setCover(_ photo: Photo, in collectionID: UUID) {
@@ -489,6 +582,16 @@ final class AppModel {
 
     func deleteComment(_ comment: PhotoComment) async throws {
         try await backend.deleteComment(comment.id)
+    }
+
+    func setTag(user: User, x: Double?, y: Double?, on photoID: UUID) async throws -> PhotoTag {
+        guard let me else { throw BackendError.notSignedIn }
+        try await backend.setTag(userID: user.id, x: x, y: y, photoID: photoID)
+        return PhotoTag(photoID: photoID, userID: user.id, user: user, taggedBy: me.id, x: x, y: y, createdAt: .now)
+    }
+
+    func removeTag(userID: UUID, from photoID: UUID) async throws {
+        try await backend.removeTag(userID: userID, photoID: photoID)
     }
 
     func setFont(_ font: BatchFont, for collectionID: UUID) {
@@ -678,7 +781,9 @@ final class AppModel {
             try await render(recipe, into: &photo)
             if let assetID = photo.photosAssetID {
                 let data = try Data(contentsOf: photo.imageURL)
-                try await PhotosEditSaver.saveRevertibleEdit(assetID: assetID, rendered: data, recipe: recipe)
+                // With limited or denied library access, the asset may not be reachable in Photos;
+                // keep the edit saved in Batches either way.
+                try? await PhotosEditSaver.saveRevertibleEdit(assetID: assetID, rendered: data, recipe: recipe)
             }
             myCollections[c].photos[p] = photo
             persist(myCollections[c])

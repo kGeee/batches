@@ -172,7 +172,7 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
             .eq("follower_id", value: me.uuidString).eq("followee_id", value: userID.uuidString).execute()
     }
 
-    // MARK: Photo likes and comments
+    // MARK: Photo likes, comments, tags and notifications
 
     func reactions(to photoIDs: [UUID]) async throws -> [UUID: PhotoReactions] {
         guard !photoIDs.isEmpty else { return [:] }
@@ -181,13 +181,21 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
         // Row level security leaves out photos you can't see and people across a block.
         async let likeRows: [LikeRow] = client.from("photo_likes").select("photo_id, user_id").in("photo_id", values: ids).execute().value
         async let commentRows: [CommentPhotoRow] = client.from("photo_comments").select("photo_id").in("photo_id", values: ids).execute().value
-        let (likes, comments) = try await (likeRows, commentRows)
+        async let tagRows: [TagRow]? = try? client.from("photo_tags")
+            .select("photo_id, user_id, tagged_by, x, y, created_at, user:profiles!user_id(*)")
+            .in("photo_id", values: ids)
+            .order("created_at")
+            .execute().value
+        let (likes, comments, tags) = try await (likeRows, commentRows, tagRows)
         var result = Dictionary(uniqueKeysWithValues: photoIDs.map { ($0, PhotoReactions()) })
         for like in likes {
             result[like.photo_id]?.likeCount += 1
             if like.user_id == me { result[like.photo_id]?.likedByMe = true }
         }
         for comment in comments { result[comment.photo_id]?.commentCount += 1 }
+        for tag in tags ?? [] {
+            result[tag.photo_id]?.tags.append(tag.model)
+        }
         return result
     }
 
@@ -216,6 +224,20 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
         try await client.from("photo_comments").delete().eq("id", value: id.uuidString).execute()
     }
 
+    func setTag(userID: UUID, x: Double?, y: Double?, photoID: UUID) async throws {
+        let me = try await myID()
+        try await client.from("photo_tags")
+            .upsert(NewTag(photo_id: photoID, user_id: userID, tagged_by: me, x: x, y: y))
+            .execute()
+    }
+
+    func removeTag(userID: UUID, photoID: UUID) async throws {
+        try await client.from("photo_tags").delete()
+            .eq("photo_id", value: photoID.uuidString)
+            .eq("user_id", value: userID.uuidString)
+            .execute()
+    }
+
     func activity(on photoIDs: [UUID], limit: Int) async throws -> [ActivityItem] {
         guard !photoIDs.isEmpty else { return [] }
         let me = try await myID()
@@ -235,9 +257,59 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
                          photoID: $0.photo_id, at: $0.created_at)
         } + comments.map {
             ActivityItem(id: "comment-\($0.id)", kind: .comment($0.body), actor: $0.author?.model, actorID: $0.author_id,
-                         photoID: $0.photo_id, at: $0.created_at)
+                         photoID: $0.photo_id, commentID: $0.id, at: $0.created_at)
         }
         return Array(items.sorted { $0.at > $1.at }.prefix(limit))
+    }
+
+    func notifications(limit: Int) async throws -> [ActivityItem] {
+        let me = try await myID()
+        let rows: [NotificationRow] = try await client.from("notifications")
+            .select("id, recipient_id, actor_id, kind, collection_id, photo_id, comment_id, body, read_at, created_at, actor:profiles!actor_id(*), collection:collections!collection_id(title)")
+            .eq("recipient_id", value: me.uuidString)
+            .order("created_at", ascending: false)
+            .limit(limit)
+            .execute().value
+        return rows.compactMap(\.model)
+    }
+
+    func markNotificationsRead(_ ids: [String]) async throws {
+        let uuids = ids.compactMap(UUID.init(uuidString:)).map(\.uuidString)
+        guard !uuids.isEmpty else { return }
+        try await client.from("notifications")
+            .update(["read_at": ISO8601DateFormatter().string(from: .now)])
+            .in("id", values: uuids)
+            .is("read_at", value: nil)
+            .execute()
+    }
+
+    func registerDeviceToken(_ token: String, environment: String) async throws {
+        _ = try await myID()
+        // An RPC rather than an upsert: if this phone was last signed in to another account, the
+        // token row belongs to that account and row level security would refuse to hand it over.
+        try await client.rpc("register_device_token", params: ["p_token": token, "p_environment": environment])
+            .execute()
+    }
+
+    func unregisterDeviceToken(_ token: String) async throws {
+        try await client.from("device_tokens").delete().eq("token", value: token).execute()
+    }
+
+    func taggedCollections(for userID: UUID) async throws -> [PhotoCollection] {
+        let tagRows: [TaggedPhotoLookupRow] = try await client.from("photo_tags")
+            .select("photo:photos!photo_id(collection_id)")
+            .eq("user_id", value: userID.uuidString)
+            .order("created_at", ascending: false)
+            .limit(200)
+            .execute().value
+        let collectionIDs = Array(Set(tagRows.compactMap { $0.photo?.collection_id.uuidString }))
+        guard !collectionIDs.isEmpty else { return [] }
+        let rows: [CollectionRow] = try await client.from("collections")
+            .select(pileSelect)
+            .in("id", values: collectionIDs)
+            .order("shot_on", ascending: false)
+            .execute().value
+        return try await finish(rows)
     }
 
     // MARK: Your desk
@@ -471,6 +543,44 @@ private struct CommentRow: Decodable {
     let id: UUID; let photo_id: UUID; let author_id: UUID; let body: String; let created_at: Date; let author: ProfileRow?
     var model: PhotoComment {
         PhotoComment(id: id, photoID: photo_id, author: author?.model, authorID: author_id, body: body, createdAt: created_at)
+    }
+}
+private struct NewTag: Encodable {
+    let photo_id: UUID; let user_id: UUID; let tagged_by: UUID; let x: Double?; let y: Double?
+}
+private struct TagRow: Decodable {
+    let photo_id: UUID; let user_id: UUID; let tagged_by: UUID; let x: Double?; let y: Double?
+    let created_at: Date; let user: ProfileRow?
+    var model: PhotoTag {
+        PhotoTag(photoID: photo_id, userID: user_id, user: user?.model, taggedBy: tagged_by, x: x, y: y, createdAt: created_at)
+    }
+}
+private struct TaggedPhotoLookupRow: Decodable {
+    struct PhotoCollectionRef: Decodable { let collection_id: UUID }
+    let photo: PhotoCollectionRef?
+}
+private struct NotificationRow: Decodable {
+    struct TitleRow: Decodable { let title: String }
+    let id: UUID; let recipient_id: UUID; let actor_id: UUID; let kind: String
+    let collection_id: UUID?; let photo_id: UUID?; let comment_id: UUID?
+    let body: String?; let read_at: Date?; let created_at: Date
+    let actor: ProfileRow?; let collection: TitleRow?
+
+    var model: ActivityItem? {
+        let parsedKind: ActivityItem.Kind
+        switch kind {
+        case "photo_like": parsedKind = .like
+        case "photo_comment": parsedKind = .comment(body ?? "")
+        case "comment_mention": parsedKind = .mention(body ?? "")
+        case "photo_tag": parsedKind = .tag
+        case "batch_shared": parsedKind = .batchShared(canAdd: body == "can_add")
+        case "photo_added": parsedKind = .photoAdded(count: max(1, Int(body ?? "1") ?? 1))
+        case "follow": parsedKind = .follow
+        default: return nil
+        }
+        return ActivityItem(id: id.uuidString.lowercased(), kind: parsedKind, actor: actor?.model,
+                            actorID: actor_id, collectionID: collection_id, batchTitle: collection?.title,
+                            photoID: photo_id, commentID: comment_id, readAt: read_at, at: created_at)
     }
 }
 

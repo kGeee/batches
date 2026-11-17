@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { aspectOf, effectiveDPI, evenPages, formats, printAspect, printBox, spreadsOf, spreadIndexOf, isLeftPage, priceCents, safeMargin } from './format.js'
-import { compositions, groupPhotos, rows, templatesFor, contentBox, wrapTitle } from './layout.js'
+import { compositions, groupPhotos, rows, snapAxis, templatesFor, contentBox, wrapTitle } from './layout.js'
 import { addPhoto, addSpread, cleanDoc, createDoc, creditLine, layoutChoices, applyLayout, moveChapter, moveSpread, removeItem, removeSpread, renameChapter, swapPhoto, usedPhotoIDs, chapterPageIndices, setBackground, relayoutChapter } from './doc.js'
 import { preflight } from './preflight.js'
 import { push, redo, start, undo } from './history.js'
@@ -81,6 +81,15 @@ describe('layout', () => {
     expect(groups[1]).toBe(2)
     expect(groups[2]).toBe(1)
     expect(groups.reduce((s, n) => s + n, 0)).toBe(5)
+  })
+  it('snaps an edge or centre to the nearest target within tolerance', () => {
+    const left = snapAxis(0.305, 0.1, [0.5, 0.2], 0.01)
+    expect(left.delta).toBeCloseTo(-0.005)
+    expect(left.lines).toEqual([0.2])
+    const centre = snapAxis(0.497, 0.1, [0.5, 0.2], 0.01)
+    expect(centre.delta).toBeCloseTo(0.003)
+    expect(centre.lines).toEqual([0.5])
+    expect(snapAxis(0.45, 0.1, [0.5, 0.2], 0.01)).toEqual({ delta: 0, lines: [] })
   })
   it('wraps titles at spaces', () => {
     expect(wrapTitle('Summer at the lake house with everyone')).toEqual(['Summer at the', 'lake house with', 'everyone'])
