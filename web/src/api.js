@@ -3,9 +3,13 @@ import { defaultFrame } from './look.js'
 
 // The publishable key only: row level security in supabase/migrations decides what each
 // signed-in person can read and write, exactly as it does for the iOS app.
-export const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY, {
-  auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true },
-})
+export const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co',
+  import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key',
+  {
+    auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true },
+  },
+)
 
 // collections and photos are linked twice (photos.collection_id and collections.cover_photo_id),
 // so the photos embed names its foreign key.
@@ -229,25 +233,78 @@ export async function ordersOf(bookID) {
   return check(await supabase.from('book_orders').select().eq('book_id', bookID).order('created_at', { ascending: false }))
 }
 
-// Likes and comments on photos -------------------------------------------------------------------
+// Likes, comments, tags and notifications --------------------------------------------------------
 
-/** Like and comment counts by photo. Row level security leaves out people across a block. */
+/** Like, comment and tag data by photo. Row level security leaves out people across a block. */
 export async function reactions(photoIDs, me) {
-  const result = Object.fromEntries(photoIDs.map((id) => [id, { likes: 0, liked: false, comments: 0 }]))
+  const result = Object.fromEntries(photoIDs.map((id) => [id, { likes: 0, liked: false, comments: 0, tags: [] }]))
   if (!photoIDs.length) return result
   for (let i = 0; i < photoIDs.length; i += 100) {
     const ids = photoIDs.slice(i, i + 100)
-    const [likes, comments] = await Promise.all([
+    const [likes, comments, tags] = await Promise.all([
       supabase.from('photo_likes').select('photo_id, user_id').in('photo_id', ids).then(check),
       supabase.from('photo_comments').select('photo_id').in('photo_id', ids).then(check),
+      supabase.from('photo_tags').select('photo_id, user_id, tagged_by, x, y, created_at, user:profiles!user_id(*)').in('photo_id', ids).order('created_at').then(check).catch(() => []),
     ])
     for (const l of likes) {
       result[l.photo_id].likes++
       if (l.user_id === me) result[l.photo_id].liked = true
     }
     for (const c of comments) result[c.photo_id].comments++
+    for (const t of tags) result[t.photo_id]?.tags.push(t)
   }
   return result
+}
+
+export async function canAddToBatch(batchID, me) {
+  const rows = check(await supabase.from('collection_members')
+    .select('can_add').eq('collection_id', batchID).eq('user_id', me).limit(1))
+  return rows[0]?.can_add === true
+}
+
+export async function setTag({ photoID, userID, x = null, y = null, me }) {
+  return check(await supabase.from('photo_tags')
+    .upsert({ photo_id: photoID, user_id: userID, tagged_by: me, x, y })
+    .select('photo_id, user_id, tagged_by, x, y, created_at, user:profiles!user_id(*)')
+    .single())
+}
+
+export async function removeTag(photoID, userID) {
+  check(await supabase.from('photo_tags').delete().eq('photo_id', photoID).eq('user_id', userID))
+}
+
+export async function taggedBatchesOf(userID) {
+  const tagRows = await supabase.from('photo_tags')
+    .select('photo:photos!photo_id(collection_id)')
+    .eq('user_id', userID)
+    .order('created_at', { ascending: false })
+    .limit(200)
+    .then(check)
+    .catch(() => [])
+  const ids = [...new Set(tagRows.map((r) => r.photo?.collection_id).filter(Boolean))]
+  if (!ids.length) return []
+  const rows = check(await supabase.from('collections').select(batchSelect)
+    .in('id', ids).order('shot_on', { ascending: false, nullsFirst: false }))
+  return finish(rows)
+}
+
+export async function notifications(me, limit = 80) {
+  return supabase.from('notifications')
+    .select('id, recipient_id, actor_id, kind, collection_id, photo_id, comment_id, body, read_at, created_at, actor:profiles!actor_id(*), collection:collections!collection_id(title), photo:photos!photo_id(id, pixel_width, pixel_height, share_path)')
+    .eq('recipient_id', me)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+    .then(check)
+    .catch(() => [])
+}
+
+export async function markNotificationsRead(ids) {
+  const valid = ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id))
+  if (!valid.length) return
+  await supabase.from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .in('id', valid)
+    .is('read_at', null)
 }
 
 export async function setLiked(liked, photoID, me) {

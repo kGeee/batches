@@ -5,7 +5,7 @@ import { fontFamily } from './look.js'
 import BatchPage from './Batch.jsx'
 import { BooksPage, NewBookPage, PickableBatch } from './book/Books.jsx'
 import { BookScreen } from './book/Book.jsx'
-import { Avatar, Link, Menu, Pile, Spinner, appURL, batchURL, counted, go, parseRoute, relative, shortDate, useLocation } from './ui.jsx'
+import { Avatar, Icon, Link, MentionText, Menu, Photo, Pile, Spinner, appURL, batchURL, counted, go, parseRoute, relative, shortDate, useLocation } from './ui.jsx'
 
 export default function App() {
   const loc = useLocation()
@@ -176,18 +176,42 @@ function CreateProfile({ userID, email, onDone }) {
 function Signed({ me, route }) {
   const [following, setFollowing] = useState(new Set())
   const [blocked, setBlocked] = useState(new Set())
+  const [notes, setNotes] = useState([])
   const refreshFollowing = useCallback(() => api.followingIDs(me.id).then(setFollowing).catch(() => {}), [me.id])
+  const refreshNotifications = useCallback(() => api.notifications(me.id).then(setNotes).catch(() => {}), [me.id])
   useEffect(() => {
     refreshFollowing()
+    refreshNotifications()
     api.blockedIDs(me.id).then(setBlocked).catch(() => {})
-  }, [refreshFollowing, me.id])
+  }, [refreshFollowing, refreshNotifications, me.id])
+
+  useEffect(() => {
+    const channel = api.supabase
+      .channel(`notifications:${me.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${me.id}` }, () => {
+        refreshNotifications()
+      })
+      .subscribe()
+    return () => { api.supabase.removeChannel(channel) }
+  }, [me.id, refreshNotifications])
 
   const toggleFollow = async (user) => {
     if (following.has(user.id)) await api.unfollow(me.id, user.id)
     else await api.follow(me.id, user.id)
     refreshFollowing()
   }
-  const ctx = useMemo(() => ({ me, following, blocked, toggleFollow }), [me, following, blocked]) // eslint-disable-line react-hooks/exhaustive-deps
+  const visibleNotes = useMemo(() => notes.filter((n) => !blocked.has(n.actor_id)), [notes, blocked])
+  const unreadCount = useMemo(() => visibleNotes.filter((n) => !n.read_at).length, [visibleNotes])
+  const markRead = useCallback(async (ids) => {
+    const set = new Set(ids)
+    const now = new Date().toISOString()
+    setNotes((prev) => prev.map((n) => (set.has(n.id) && !n.read_at ? { ...n, read_at: now } : n)))
+    await api.markNotificationsRead(ids).catch(() => {})
+  }, [])
+  const ctx = useMemo(
+    () => ({ me, following, blocked, toggleFollow, notes: visibleNotes, unreadCount, markRead, refreshNotifications }),
+    [me, following, blocked, visibleNotes, unreadCount, markRead, refreshNotifications] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   if (route.page === 'batch') return <BatchPage key={route.id} id={route.id} photoID={route.photo} ctx={ctx} />
   if (route.page === 'book') return <BookScreen key={route.id} id={route.id} view={route.view} ctx={ctx} />
@@ -196,12 +220,15 @@ function Signed({ me, route }) {
   if (route.page === 'books') body = <BooksPage ctx={ctx} />
   else if (route.page === 'newbook') body = <NewBookPage key={route.picked.join()} picked={route.picked} ctx={ctx} />
   else if (route.page === 'friends') body = <Friends ctx={ctx} />
+  else if (route.page === 'notifications') body = <NotificationsPage ctx={ctx} />
   else if (route.page === 'people') body = <People ctx={ctx} />
   else if (route.page === 'profile') body = <ProfilePage key={route.handle} handle={route.handle} ctx={ctx} />
   else body = <Desk ctx={ctx} />
 
-  const tab = (page, to, label) => (
-    <Link to={to} className={route.page === page ? 'on' : ''} aria-current={route.page === page ? 'page' : undefined}>{label}</Link>
+  const tab = (page, to, label, badge = 0) => (
+    <Link to={to} className={route.page === page ? 'on' : ''} aria-current={route.page === page ? 'page' : undefined}>
+      {label}{badge > 0 && <span className="tab-badge">{badge}</span>}
+    </Link>
   )
   return (
     <div className="app">
@@ -211,6 +238,7 @@ function Signed({ me, route }) {
           {tab('desk', '/app', 'Desk')}
           {tab(route.page === 'newbook' ? 'newbook' : 'books', '/app/books', 'Books')}
           {tab('friends', '/app/friends', 'Friends')}
+          {tab('notifications', '/app/notifications', 'Notifications', unreadCount)}
           {tab('people', '/app/people', 'Find people')}
         </nav>
         <div className="me">
@@ -366,18 +394,96 @@ function People({ ctx }) {
   )
 }
 
+function NotificationsPage({ ctx }) {
+  const { notes, markRead, refreshNotifications } = ctx
+  const [unreadOnOpen] = useState(() => new Set(notes.filter((n) => !n.read_at).map((n) => n.id)))
+
+  useEffect(() => {
+    refreshNotifications()
+  }, [refreshNotifications])
+
+  useEffect(() => {
+    const unread = notes.filter((n) => !n.read_at).map((n) => n.id)
+    if (unread.length) markRead(unread)
+  }, [notes, markRead])
+
+  return (
+    <main>
+      <header className="pagehead"><h1 className="title big">Notifications</h1></header>
+      {!notes.length && (
+        <div className="card empty">
+          <h2 className="title">No notifications yet</h2>
+          <p>When someone tags you, mentions you, shares a batch, follows you, or reacts to your photos, it shows up here.</p>
+        </div>
+      )}
+      {notes.length > 0 && (
+        <ul className="notifications card">
+          {notes.map((item) => {
+            const href = item.collection_id
+              ? batchURL(item.collection_id, item.photo_id)
+              : item.actor?.handle ? `/app/u/${item.actor.handle}` : '/app'
+            const isNew = unreadOnOpen.has(item.id) || !item.read_at
+            return (
+              <li key={item.id} className={isNew ? 'unread' : ''}>
+                <Link to={href} className="notification-row">
+                  <Avatar user={item.actor} size={36} />
+                  <div className="notification-body">
+                    <p className="notification-line">
+                      <b>{item.actor?.display_name ?? 'Someone'}</b>{' '}
+                      <NotificationCopy item={item} />
+                    </p>
+                    <p className="meta">
+                      {[relative(item.created_at), item.collection?.title].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                  {isNew && <span className="unread-dot" aria-label="New" />}
+                  {item.photo && (
+                    <div className="notification-thumb">
+                      <Photo photo={item.photo} tier="s" />
+                    </div>
+                  )}
+                </Link>
+                {item.kind === 'follow' && item.actor && <FollowButton user={item.actor} ctx={ctx} />}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </main>
+  )
+}
+
+function NotificationCopy({ item }) {
+  switch (item.kind) {
+    case 'photo_like': return 'liked your photo'
+    case 'photo_comment': return <>commented: <MentionText text={item.body} /></>
+    case 'comment_mention': return <>mentioned you: <MentionText text={item.body} /></>
+    case 'photo_tag': return 'tagged you in a photo'
+    case 'batch_shared': return item.body === 'can_add' ? 'invited you to add photos to a batch' : 'shared a batch with you'
+    case 'photo_added': {
+      const n = Math.max(1, parseInt(item.body || '1', 10) || 1)
+      return `added ${n === 1 ? 'a photo' : `${n} photos`} to your batch`
+    }
+    case 'follow': return 'started following you'
+    default: return ''
+  }
+}
+
 function ProfilePage({ handle, ctx }) {
+  const [section, setSection] = useState('batches')
   const { data, error } = useLoad(async () => {
     const user = await api.profileByHandle(handle)
-    if (!user || ctx.blocked.has(user.id)) return { user, batches: [] }
-    return { user, batches: await api.batchesOf(user.id) }
+    if (!user || ctx.blocked.has(user.id)) return { user, batches: [], tagged: [] }
+    const [batches, tagged] = await Promise.all([api.batchesOf(user.id), api.taggedBatchesOf(user.id)])
+    return { user, batches, tagged: tagged.filter((b) => !ctx.blocked.has(b.owner_id)) }
   }, [handle, ctx.following, ctx.blocked])
   if (error) return <main><p className="problem">{error.message}</p></main>
   if (data === undefined) return <Spinner />
   if (!data.user) return <main><div className="card empty"><h2 className="title">No one is called @{handle}</h2></div></main>
-  const { user, batches } = data
+  const { user, batches, tagged } = data
   const isMe = user.id === ctx.me.id
   const isBlocked = ctx.blocked.has(user.id)
+  const shown = section === 'tagged' ? tagged : batches
   return (
     <main>
       <header className="pagehead profilehead">
@@ -389,8 +495,22 @@ function ProfilePage({ handle, ctx }) {
         {!isMe && !isBlocked && <FollowButton user={user} ctx={ctx} />}
       </header>
       {isBlocked && <div className="card empty"><p>You've blocked @{user.handle}. You can unblock them in Batches on your iPhone.</p></div>}
-      {!isBlocked && !batches.length && <p className="meta">{isMe ? 'No batches yet.' : `Nothing of ${user.display_name}'s is shared with you yet.`}</p>}
-      <div className="grid">{batches.map((b) => <BatchCard key={b.id} batch={b} showVisibility={isMe} />)}</div>
+      {!isBlocked && (tagged.length > 0 || section === 'tagged') && (
+        <div className="seg-tabs" role="tablist">
+          <button role="tab" aria-selected={section === 'batches'} className={section === 'batches' ? 'on' : ''} onClick={() => setSection('batches')}>Batches</button>
+          <button role="tab" aria-selected={section === 'tagged'} className={section === 'tagged' ? 'on' : ''} onClick={() => setSection('tagged')}>
+            Tagged{tagged.length > 0 ? ` · ${tagged.length}` : ''}
+          </button>
+        </div>
+      )}
+      {!isBlocked && !shown.length && (
+        <p className="meta">
+          {section === 'tagged'
+            ? (isMe ? 'Batches you are tagged in show up here.' : `No visible batches tag ${user.display_name} yet.`)
+            : (isMe ? 'No batches yet.' : `Nothing of ${user.display_name}'s is shared with you yet.`)}
+        </p>
+      )}
+      <div className="grid">{shown.map((b) => <BatchCard key={b.id} batch={b} showVisibility={isMe && b.owner_id === ctx.me.id} />)}</div>
     </main>
   )
 }

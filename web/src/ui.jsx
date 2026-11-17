@@ -13,6 +13,7 @@ export function parseRoute(pathname, search) {
   if (b) return { page: 'batch', id: decodeURIComponent(b[1]).toLowerCase(), photo: photo?.toLowerCase() ?? null }
   const rest = pathname.replace(/^\/app\/?/, '').split('/').filter(Boolean)
   if (rest[0] === 'friends') return { page: 'friends' }
+  if (rest[0] === 'notifications') return { page: 'notifications' }
   if (rest[0] === 'people') return { page: 'people' }
   if (rest[0] === 'u' && rest[1]) return { page: 'profile', handle: decodeURIComponent(rest[1]) }
   if (rest[0] === 'books') {
@@ -173,6 +174,9 @@ const paths = {
   redo: <path d="M15 7l4 4-4 4M19 11h-9a5 5 0 000 10h2" />,
   book: <path d="M5 4.5A1.5 1.5 0 016.5 3H19v15H6.5A1.5 1.5 0 005 19.5zM5 19.5A1.5 1.5 0 006.5 21H19" />,
   eye: <g><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></g>,
+  eyeOff: <g><path d="M3 3l18 18M10.6 10.6a2.8 2.8 0 004 4" /><path d="M9.4 5.8A9.8 9.8 0 0112 5.5C18 5.5 21.5 12 21.5 12a16.8 16.8 0 01-3.2 4.1M6.4 6.7C4.1 8.4 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.7 0 3.2-.4 4.5-1.1" /></g>,
+  tag: <g><path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3.5 13.5V4h9.5l7.6 7.6a2 2 0 010 2.8z" /><circle cx="8" cy="8" r="1.4" /></g>,
+  bell: <g><path d="M18 8a6 6 0 10-12 0c0 7-3 8.5-3 8.5h18S18 15 18 8z" /><path d="M13.7 20a2 2 0 01-3.4 0" /></g>,
 }
 export function Icon({ name, filled, size = 20, label }) {
   return (
@@ -262,4 +266,48 @@ export function relative(d) {
   if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h`
   const days = Math.round(minutes / 1440)
   return days < 7 ? `${days}d` : shortDate(d)
+}
+
+/** Splits text around valid @handle mentions into plain strings and { handle, display } tokens. */
+export function splitMentions(text) {
+  if (!text) return []
+  const parts = []
+  const pushStr = (s) => {
+    if (!s) return
+    if (typeof parts[parts.length - 1] === 'string') parts[parts.length - 1] += s
+    else parts.push(s)
+  }
+  const re = /(^|[^a-zA-Z0-9_.])@([a-zA-Z0-9_.]{3,24})/g
+  let last = 0
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const prefix = m[1]
+    const raw = m[2]
+    const clean = raw.replace(/\.+$/, '')
+    const trailing = raw.slice(clean.length)
+    if (m.index > last) pushStr(text.slice(last, m.index))
+    if (prefix) pushStr(prefix)
+    if (/^[a-z0-9_.]{3,24}$/i.test(clean)) {
+      parts.push({ handle: clean.toLowerCase(), display: `@${clean}` })
+      if (trailing) pushStr(trailing)
+    } else {
+      pushStr(`@${raw}`)
+    }
+    last = m.index + m[0].length
+  }
+  if (last < text.length) pushStr(text.slice(last))
+  return parts
+}
+
+/** Splits text around valid @handle mentions and links them to /app/u/<handle>. */
+export function MentionText({ text }) {
+  const parts = splitMentions(text)
+  if (!parts.length) return null
+  return (
+    <>
+      {parts.map((part, i) => typeof part === 'string'
+        ? part
+        : <Link key={i} className="mention" to={`/app/u/${part.handle}`}>{part.display}</Link>)}
+    </>
+  )
 }
