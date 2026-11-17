@@ -272,12 +272,13 @@ struct MentionText: View {
 
     private var attributed: AttributedString {
         var result = AttributedString(text)
-        let pattern = #/(?:^|(?<=[^a-zA-Z0-9_.]))@([a-zA-Z0-9_.]{3,24})/#
+        // Swift Regex has no lookbehind, so the character before the @ is captured and skipped.
+        let pattern = #/(^|[^a-zA-Z0-9_.])@([a-zA-Z0-9_.]{3,24})/#
         for match in text.matches(of: pattern) {
-            let rawHandle = String(match.output.1).lowercased()
+            let rawHandle = String(match.output.2).lowercased()
             let cleanHandle = rawHandle.trimmingCharacters(in: CharacterSet(charactersIn: "."))
             guard User.isValidHandle(cleanHandle),
-                  let start = AttributedString.Index(match.range.lowerBound, within: result),
+                  let start = AttributedString.Index(match.output.1.endIndex, within: result),
                   let end = AttributedString.Index(match.range.upperBound, within: result) else { continue }
             result[start..<end].foregroundColor = .strewnAccent
             result[start..<end].link = URL(string: "strewn://u/\(cleanHandle)")
@@ -305,6 +306,9 @@ struct ReactionsLine: View {
         }
         .font(.caption2.weight(.semibold).monospacedDigit())
         .labelStyle(CompactLabel())
+        // Never squeezed: beside a long batch title the counts were cut to slivers. The title wraps instead.
+        .fixedSize()
+        .layoutPriority(1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(reactions.likeCount.counted("like")), \(reactions.commentCount.counted("comment")), \(reactions.tags.count.counted("tagged person", plural: "tagged people"))")
     }
