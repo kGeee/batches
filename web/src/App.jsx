@@ -13,6 +13,7 @@ export default function App() {
   const [session, setSession] = useState(undefined)   // undefined while restoring
   const [me, setMe] = useState(undefined)
   const [linkProblem, setLinkProblem] = useState(null)
+  const [signingIn, setSigningIn] = useState(false)
 
   useEffect(() => {
     // An email link comes back with ?code= (or an error). supabase-js trades the code for a
@@ -51,10 +52,18 @@ export default function App() {
   }, [route.page])
 
   if (session === undefined || (session && me === undefined)) return <Spinner />
+  if (!session && route.page === 'batch' && !signingIn && !linkProblem) {
+    // A public batch opens for anyone with the link; anything else falls back to signing in.
+    const guest = { me: null, blocked: noOne, signIn: () => setSigningIn(true) }
+    return <BatchPage key={route.id} id={route.id} photoID={route.photo} ctx={guest}
+                      signInInstead={<SignIn shared={route} linkProblem={linkProblem} />} />
+  }
   if (!session) return <SignIn shared={route.page === 'batch' ? route : null} linkProblem={linkProblem} />
   if (!me) return <CreateProfile userID={session.user.id} email={session.user.email} onDone={setMe} />
   return <Signed me={me} route={route} />
 }
+
+const noOne = new Set()
 
 // Signing in -------------------------------------------------------------------------------------
 

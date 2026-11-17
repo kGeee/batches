@@ -250,6 +250,10 @@ input.code { font: 600 26px var(--mono); letter-spacing: .3em; text-align: cente
 .intro .byline { margin-top: 4px; font-size: 15px; }
 .chev { color: var(--muted); font-weight: 600; }
 .app-only { margin-top: 40px; opacity: .8; }
+.guest-cta { margin: 48px auto 24px; padding: 0 16px; display: grid; justify-items: center; gap: 12px; text-align: center; }
+.guest-cta-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.round.brand-round { padding: 0; overflow: hidden; }
+.round.brand-round img { display: block; border-radius: 7px; }
 
 .column { width: min(960px, 100%); margin: 0 auto; padding: 0 12px; display: grid; gap: 22px; container-type: inline-size; }
 .column figure, .roll figure { margin: 0; display: grid; gap: 8px; }

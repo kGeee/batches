@@ -11,7 +11,7 @@ import {
  * column, two columns, a roll of film, or the owner's freehand board, on the owner's background.
  * Full frame is the rule; nothing is cropped.
  */
-export default function BatchPage({ id, photoID, ctx }) {
+export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   const { me } = ctx
   const [batch, setBatch] = useState(undefined)   // undefined while loading, null when not allowed
   const [problem, setProblem] = useState(null)
@@ -29,18 +29,19 @@ export default function BatchPage({ id, photoID, ctx }) {
       // Someone you've blocked is hidden by the database already; this covers the moment between.
       const visible = b && !ctx.blocked.has(b.owner_id) ? b : null
       setBatch(visible)
-      if (visible && visible.owner_id !== me.id) {
+      if (visible && me && visible.owner_id !== me.id) {
         api.canAddToBatch(visible.id, me.id).then((allowed) => live && setCanAdd(allowed)).catch(() => {})
       }
     }).catch((e) => live && setProblem(e))
     return () => { live = false }
-  }, [id, ctx.blocked, me.id])
+  }, [id, ctx.blocked, me?.id])
 
   const photoIDs = useMemo(() => batch?.photos.map((p) => p.id) ?? [], [batch])
   useEffect(() => {
-    if (!photoIDs.length) return
+    // Signed out there are no likes, comments or tags to show: those stay behind signing in.
+    if (!photoIDs.length || !me) return
     api.reactions(photoIDs, me.id).then(setReactions).catch(() => setReactions(null))
-  }, [photoIDs, me.id])
+  }, [photoIDs, me?.id])
 
   /** Optimistic: the heart fills straight away and goes back if the server says no. */
   const like = useCallback((photo) => {
@@ -52,7 +53,7 @@ export default function BatchPage({ id, photoID, ctx }) {
       setReactions((r) => ({ ...r, [photo.id]: before }))
       setToast("Couldn't save that like")
     })
-  }, [reactions, me.id])
+  }, [reactions, me?.id])
 
   const setCommentCount = useCallback((photoID, n) => {
     setReactions((r) => (r?.[photoID] ? { ...r, [photoID]: { ...r[photoID], comments: n } } : r))
@@ -64,9 +65,9 @@ export default function BatchPage({ id, photoID, ctx }) {
 
   if (problem) return <Trouble text={problem.message} />
   if (batch === undefined) return <Spinner />
-  if (batch === null) return <NoAccess id={id} photoID={photoID} me={me} />
+  if (batch === null) return me ? <NoAccess id={id} photoID={photoID} me={me} /> : signInInstead
 
-  const isOwner = batch.owner_id === me.id
+  const isOwner = !!me && batch.owner_id === me.id
   const look = backdrop(batch)
   const viewing = photoID ? batch.photos.find((p) => p.id === photoID) : null
   const open = (photo) => go(batchURL(batch.id, photo.id), { state: { viewer: true, keepScroll: true } })
@@ -80,15 +81,15 @@ export default function BatchPage({ id, photoID, ctx }) {
       setToast('Link copied. It opens for people who can see this batch.')
     } catch { setToast("Couldn't copy the link") }
   }
-  const canReport = (photo) => (photo.added_by ?? batch.owner_id) !== me.id
+  const canReport = (photo) => !!me && (photo.added_by ?? batch.owner_id) !== me.id
   const canTag = (photo) => isOwner || (canAdd && photo.added_by === me.id)
 
   return (
     <div className={`wall wall-${look.key} ${look.neutral ? 'neutral' : ''}`}
          data-scheme={look.scheme ?? undefined}
          style={look.color ? { '--wall': look.color } : undefined}>
-      <BatchHeader batch={batch} isOwner={isOwner} onCopy={() => copyLink(null)}
-                   onReport={!isOwner ? () => setReporting({ subject: 'this batch', batchID: batch.id, userID: batch.owner_id }) : null} />
+      <BatchHeader batch={batch} isOwner={isOwner} guest={!me} onCopy={() => copyLink(null)}
+                   onReport={me && !isOwner ? () => setReporting({ subject: 'this batch', batchID: batch.id, userID: batch.owner_id }) : null} />
       <section className="intro">
         <h1 className="batch-title" style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</h1>
         {batch.description && <p className="description" style={{ fontFamily: fontFamily(batch.font) }}>{batch.description}</p>}
@@ -101,7 +102,17 @@ export default function BatchPage({ id, photoID, ctx }) {
       </section>
       <BatchBody batch={batch} reactions={reactions} canTag={canTag} onOpen={open} onTag={(p) => setTagging(p)} />
       {!batch.photos.length && <p className="meta center-text">No photos in this batch yet.</p>}
-      <p className="app-only meta center-text">Editing, adding photos and arranging happen in Batches on iPhone.</p>
+      {me ? (
+        <p className="app-only meta center-text">Editing, adding photos and arranging happen in Batches on iPhone.</p>
+      ) : (
+        <div className="guest-cta">
+          <p className="meta">Sign in to like, comment and see who's tagged.</p>
+          <div className="guest-cta-actions">
+            <button className="primary" onClick={ctx.signIn}>Sign in</button>
+            <a className="button secondary" href={appURL(batch.id, photoID)}>Open in Batches</a>
+          </div>
+        </div>
+      )}
       {viewing && (
         <Viewer batch={batch} photo={viewing} me={me} isOwner={isOwner} canTag={canTag(viewing)}
                 reactions={reactions?.[viewing.id]}
@@ -123,7 +134,7 @@ export default function BatchPage({ id, photoID, ctx }) {
   )
 }
 
-function BatchHeader({ batch, isOwner, onCopy, onReport }) {
+function BatchHeader({ batch, isOwner, guest, onCopy, onReport }) {
   const [scrolled, setScrolled] = useState(false)
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 140)
@@ -133,7 +144,11 @@ function BatchHeader({ batch, isOwner, onCopy, onReport }) {
   }, [])
   return (
     <header className="gallerybar">
-      <button className="round" onClick={() => back('/app')} aria-label="Back"><Icon name="back" /></button>
+      {guest ? (
+        <a className="round brand-round" href="/" aria-label="Batches"><img src="/img/icon.png" alt="" width="26" height="26" /></a>
+      ) : (
+        <button className="round" onClick={() => back('/app')} aria-label="Back"><Icon name="back" /></button>
+      )}
       <div className={`gallerybar-title ${scrolled ? 'on' : ''}`} aria-hidden={!scrolled}>
         <b style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</b>
         <span className="meta">{counted(batch.photos.length, 'frame')}{!isOwner && batch.owner ? ` · @${batch.owner.handle}` : ''}</span>
