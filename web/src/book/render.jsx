@@ -4,7 +4,7 @@
 import { createContext, useContext } from 'react'
 import { Photo } from '../ui.jsx'
 import { captionFamily, fontFamily } from '../look.js'
-import { aspectOf, coverLayout, coverPhotoBox, framePadding, lineHeight, printBox, spreadsOf } from './format.js'
+import { aspectOf, coverLayout, coverPhotoBox, formatOf, framePadding, lineHeight, printBox, safeMargin, spreadsOf } from './format.js'
 import { backgroundColor, chapterOf, cloths, photoCredit, spillInto, textColor } from './doc.js'
 import './book.css'
 
@@ -16,10 +16,10 @@ export const pct = (v) => `${v * 100}cqw`
 
 /**
  * One page. `selected` and the pointer handlers make it editable; `handles` adds resize and turn
- * handles to the selected item. `shift` moves everything left by a page, for the right half of a
- * photo that spans the spread.
+ * handles to the selected item. `guides` draws the lines a dragged item snapped to, and
+ * `showSafe` the area that stays clear of the trim, both for the editor only.
  */
-export function BookPage({ doc, index, className = '', selected = [], onItemDown, onPageDown, handles = false, onHandleDown, onDrop, onDragOver, style }) {
+export function BookPage({ doc, index, className = '', selected = [], onItemDown, onPageDown, handles = false, onHandleDown, onDrop, onDragOver, style, guides, showSafe }) {
   const page = doc.pages[index]
   if (!page) return <div className={`bpage endpaper ${className}`} style={{ background: cloths[doc.cover.cloth]?.color, ...style }} />
   const spill = spillInto(doc, index)
@@ -33,6 +33,13 @@ export function BookPage({ doc, index, className = '', selected = [], onItemDown
               handles={handles && !item.spill && selected.length === 1 && selected[0] === item.id} onHandleDown={onHandleDown} />
       ))}
       {!page.items.length && !spill.length && onPageDown && <span className="bpage-empty">Drop photos here</span>}
+      {showSafe && (
+        <div className="bsafe" aria-hidden="true" style={{ inset: pct(safeMargin(formatOf(doc))) }}>
+          <span className="bcenter v" /><span className="bcenter h" />
+        </div>
+      )}
+      {guides?.xs.map((x) => <span key={`x${x}`} className="bguide v" style={{ left: pct(x) }} aria-hidden="true" />)}
+      {guides?.ys.map((y) => <span key={`y${y}`} className="bguide h" style={{ top: pct(y) }} aria-hidden="true" />)}
     </div>
   )
 }
@@ -40,7 +47,7 @@ export function BookPage({ doc, index, className = '', selected = [], onItemDown
 function Item({ doc, page, item, selected, onDown, handles, onHandleDown }) {
   if (item.kind === 'text') {
     return (
-      <div className={`bitem btext ${selected ? 'selected' : ''} ${onDown ? 'live' : ''}`} onPointerDown={onDown} style={{
+      <div className={`bitem btext ${selected ? 'selected' : ''} ${onDown ? 'live' : ''}`} data-id={item.id} onPointerDown={onDown} style={{
         left: pct(item.x), top: pct(item.y), zIndex: item.z,
         transform: `translate(-50%, -50%) rotate(${item.rotation}deg)`,
         fontFamily: textFamily(item.font), fontSize: pct(item.size), lineHeight,
@@ -63,7 +70,7 @@ function PhotoItem({ doc, page, item, selected, onDown, handles, onHandleDown })
   const chapter = chapterOf(doc, page.chapter)
   const credit = doc.credits && !item.spill ? photoCredit(photo, batches[chapter?.batch], me) : ''
   return (
-    <div className={`bitem bprint bf-${item.frame} ${selected ? 'selected' : ''} ${onDown ? 'live' : ''}`} onPointerDown={onDown} style={{
+    <div className={`bitem bprint bf-${item.frame} ${selected ? 'selected' : ''} ${onDown ? 'live' : ''}`} data-id={item.id} onPointerDown={onDown} style={{
       left: pct(item.x - box.w / 2), top: pct(item.y - box.h / 2), width: pct(box.w), height: pct(box.h), zIndex: item.z,
       padding: `${pct(t)} ${pct(r)} ${pct(b)} ${pct(l)}`, transform: item.rotation ? `rotate(${item.rotation}deg)` : undefined,
     }}>

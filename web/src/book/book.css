@@ -40,6 +40,15 @@
 .bhandle.turn { left: 50%; top: -30px; cursor: grab; background: #e08a1e; }
 .bhandle.turn::after { content: ""; position: absolute; left: 50%; top: 12px; width: 2px; height: 16px; margin-left: -1px; background: #e08a1e; }
 
+.bguide { position: absolute; z-index: 900; pointer-events: none; background: #e2338f; }
+.bguide.v { top: 0; bottom: 0; width: 1px; margin-left: -.5px; }
+.bguide.h { left: 0; right: 0; height: 1px; margin-top: -.5px; }
+.bsafe { position: absolute; z-index: 899; pointer-events: none; border: 1px dashed rgba(64, 140, 220, .7); }
+.bcenter { position: absolute; background: rgba(64, 140, 220, .3); }
+.bcenter.v { left: 50%; top: 0; bottom: 0; width: 1px; }
+.bcenter.h { top: 50%; left: 0; right: 0; height: 1px; }
+.toggle.on { background: var(--ink); color: var(--card-solid); }
+
 .bspread { position: relative; display: grid; grid-template-columns: 1fr 1fr; box-shadow: 0 2px 6px rgba(0, 0, 0, .14), 0 18px 50px rgba(var(--shadow), .28); background: #ddd; }
 .bfold { position: absolute; top: 0; bottom: 0; left: 50%; width: 8%; transform: translateX(-50%); pointer-events: none;
   background: linear-gradient(90deg, transparent, rgba(0, 0, 0, .07) 42%, rgba(0, 0, 0, .16) 50%, rgba(0, 0, 0, .05) 58%, transparent); }

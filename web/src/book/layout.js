@@ -117,6 +117,27 @@ export function acrossSpread(photo, frame, format) {
   return { x: 1, y: 0.5, w, h: w / a }
 }
 
+// Snapping -------------------------------------------------------------------------------------
+
+/**
+ * Where a dragged box lands on one axis. `c` is its centre and `h` half its size; it snaps when
+ * its start, centre or end is within `tolerance` of a target. Returns how far to move and the
+ * target lines it now touches.
+ */
+export function snapAxis(c, h, targets, tolerance) {
+  let best = null
+  for (const t of targets) {
+    for (const p of [c - h, c, c + h]) {
+      const d = t - p
+      if (Math.abs(d) <= tolerance && (!best || Math.abs(d) < Math.abs(best))) best = d
+    }
+  }
+  if (best === null) return { delta: 0, lines: [] }
+  const at = [c - h + best, c + best, c + h + best]
+  const lines = [...new Set(targets.filter((t) => at.some((p) => Math.abs(p - t) < 1e-6)))]
+  return { delta: best, lines }
+}
+
 // Whole books ----------------------------------------------------------------------------------
 
 /** How photos group onto pages: a hero to start, portraits in pairs, a rhythm of ones and twos. */
