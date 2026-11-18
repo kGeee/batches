@@ -11,3 +11,4 @@ Strewn.xcodeproj/
 # macOS and Python clutter
 .DS_Store
 __pycache__/
+.vercel

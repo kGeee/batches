@@ -1,0 +1,5 @@
+# The Vercel project batches-app serves site/ (its Root Directory). Deploy from the repo root
+# with `vercel deploy --prod`; only site/ needs uploading.
+/*
+!/site
+/site/.vercel

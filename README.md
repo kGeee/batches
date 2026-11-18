@@ -78,7 +78,7 @@ The dev server answers `/b/<id>` and `/app/...` the way Vercel does in productio
 
 ### The site
 
-`site/` is plain HTML deployed to Vercel: the landing page, privacy policy, support page, the built web viewer under `app/`, and `.well-known/apple-app-site-association`. Deploy with `vercel deploy --prod` from `site/`. `site/vercel.json` sends `/b/<id>` and `/app/...` to the viewer and redirects `www` to the bare domain.
+`site/` is plain HTML deployed to Vercel: the landing page, privacy policy, support page, the built web viewer under `app/`, and `.well-known/apple-app-site-association`. The Vercel project's Root Directory is `site`, so pushes to `main` deploy it through the GitHub integration; to deploy by hand, run `vercel deploy --prod` from the repo root (`.vercelignore` uploads only `site/`). Rebuild `site/app` (`npm --prefix web run build`) and commit it first: Vercel serves the committed build, it doesn't build the viewer. `site/vercel.json` sends `/b/<id>` and `/app/...` to the viewer and redirects `www` to the bare domain.
 
 ## Layout
 
