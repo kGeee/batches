@@ -407,6 +407,11 @@ deno_version = 2
 [functions.push]
 verify_jwt = false
 
+# Called by Resend's email.received webhook, which proves itself with a Svix signature checked in
+# the function, not a user JWT.
+[functions.inbound-email]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
