@@ -549,9 +549,9 @@ struct GalleryView: View {
 
     private var canAdd: Bool { isOwner || collection.canAdd }
 
-    /// The editor saves into your own piles, so it's for your photos in your piles.
+    /// The editor saves into your own piles, so it's for your photos with a local file on this phone.
     private func canEdit(_ photo: Photo) -> Bool {
-        isOwner && photo.addedBy == nil
+        isOwner && photo.addedBy == nil && photo.imageURL.isFileURL
     }
 
     /// The owner removes anything; a friend, only what they added.

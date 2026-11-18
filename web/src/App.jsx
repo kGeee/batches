@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as api from './api.js'
+import { clearGooglePhotosSession } from './googlePhotos.js'
 import { clearPhotos } from './photos.js'
 import { fontFamily } from './look.js'
 import BatchPage from './Batch.jsx'
+import { GooglePhotosMark, NewBatchSheet } from './UploadSheet.jsx'
 import { BooksPage, NewBookPage, PickableBatch } from './book/Books.jsx'
 import { BookScreen } from './book/Book.jsx'
 import { Avatar, Icon, Link, MentionText, Menu, Photo, Pile, Spinner, appURL, batchURL, counted, go, parseRoute, relative, shortDate, useLocation } from './ui.jsx'
@@ -35,7 +37,10 @@ export default function App() {
     })
     const { data } = api.supabase.auth.onAuthStateChange((event, s) => {
       setSession(s)
-      if (event === 'SIGNED_OUT') clearPhotos()
+      if (event === 'SIGNED_OUT') {
+        clearPhotos()
+        clearGooglePhotosSession()
+      }
     })
     return () => data.subscription.unsubscribe()
   }, [])
@@ -279,7 +284,7 @@ const visibilityTitle = { private: 'Only me', people: 'Specific people', followe
 
 /** Your own batches, in the order you arranged them in the app, groups and all. */
 function Desk({ ctx }) {
-  const { me } = ctx
+  const { me, blocked } = ctx
   const { data, error } = useLoad(async () => {
     const [batches, layout] = await Promise.all([api.batchesOf(me.id), api.deskLayout(me.id).catch(() => ({}))])
     return { batches, layout }
@@ -289,25 +294,79 @@ function Desk({ ctx }) {
   const frames = data?.batches.reduce((n, b) => n + b.photos.length, 0) ?? 0
   // Picking batches for a book, right on the desk.
   const [picking, setPicking] = useState(null)
+  const [creating, setCreating] = useState(null)
+  const [deskDrop, setDeskDrop] = useState(false)
+  const dropDepth = useRef(0)
+
   const card = (b) => picking
     ? <PickableBatch key={b.id} batch={b} on={picking.includes(b.id)} onToggle={() => setPicking((p) => (p.includes(b.id) ? p.filter((x) => x !== b.id) : [...p, b.id]))} />
     : <BatchCard key={b.id} batch={b} tilted={tilted} showVisibility />
 
   return (
-    <main>
+    <main
+      className={deskDrop ? 'desk-dropping' : undefined}
+      onDragEnter={(e) => {
+        if (creating || !e.dataTransfer?.types?.includes?.('Files')) return
+        e.preventDefault()
+        dropDepth.current += 1
+        setDeskDrop(true)
+      }}
+      onDragOver={(e) => {
+        if (creating || !e.dataTransfer?.types?.includes?.('Files')) return
+        e.preventDefault()
+      }}
+      onDragLeave={(e) => {
+        if (creating) return
+        e.preventDefault()
+        dropDepth.current = Math.max(0, dropDepth.current - 1)
+        if (dropDepth.current === 0) setDeskDrop(false)
+      }}
+      onDrop={(e) => {
+        if (creating) return
+        e.preventDefault()
+        dropDepth.current = 0
+        setDeskDrop(false)
+        if (e.dataTransfer?.files?.length) {
+          setCreating({ initialFiles: Array.from(e.dataTransfer.files) })
+        }
+      }}
+    >
       <header className="pagehead profilehead">
         <div className="who">
           <h1 className="title big">{me.display_name}'s desk</h1>
           <p className="meta">{counted(data?.batches.length ?? 0, 'batch', 'batches')} · {counted(frames, 'frame')} · {counted(me.follower_count, 'follower')} · {me.following_count} following</p>
         </div>
-        {data?.batches.some((b) => b.photos.length) && !picking && <button className="secondary" onClick={() => setPicking([])}>Make a book</button>}
+        {!picking && (
+          <div className="head-actions">
+            {data?.batches.some((b) => b.photos.length) && (
+              <button className="secondary" onClick={() => setPicking([])}>Make a book</button>
+            )}
+            <button className="primary" onClick={() => setCreating({})}>
+              <Icon name="plus" size={18} /><span>New batch</span>
+            </button>
+          </div>
+        )}
       </header>
+      {deskDrop && (
+        <div className="desk-drop-hint" role="status">
+          <Icon name="upload" size={20} />
+          <span>Drop photos anywhere on your desk to start a new batch</span>
+        </div>
+      )}
       {error && <p className="problem">{error.message}</p>}
       {data === undefined && <Spinner />}
       {data && !data.batches.length && (
         <div className="card empty">
           <h2 className="title">Your desk is clear</h2>
-          <p>Make batches in Batches on your iPhone. They show up here, full frame, and anything you share shows up for your friends.</p>
+          <p>Start a batch from your computer or Google Photos, or make one in Batches on your iPhone. Every photo stays full frame.</p>
+          <div className="empty-actions">
+            <button className="primary" onClick={() => setCreating({})}>
+              <Icon name="upload" size={17} /><span>Upload photos</span>
+            </button>
+            <button className="secondary gp-button" onClick={() => setCreating({ autoStartGooglePhotos: true })}>
+              <GooglePhotosMark size={17} /><span>Google Photos</span>
+            </button>
+          </div>
         </div>
       )}
       <div className="grid">
@@ -324,6 +383,19 @@ function Desk({ ctx }) {
           <button className="secondary" onClick={() => setPicking(null)}>Cancel</button>
           <button className="primary" disabled={!picking.length} onClick={() => go(`/app/books/new?b=${picking.join(',')}`)}>Continue</button>
         </div>
+      )}
+      {creating && (
+        <NewBatchSheet
+          me={me}
+          blocked={blocked}
+          initialFiles={creating.initialFiles ?? null}
+          autoStartGooglePhotos={Boolean(creating.autoStartGooglePhotos)}
+          onClose={() => setCreating(null)}
+          onCreated={(batchID) => {
+            setCreating(null)
+            go(batchURL(batchID))
+          }}
+        />
       )}
     </main>
   )

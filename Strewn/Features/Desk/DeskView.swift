@@ -84,6 +84,12 @@ struct DeskView: View {
                 }
                 .sensoryFeedback(.impact(weight: .light), trigger: openID)
                 .sensoryFeedback(.selection, trigger: dropTargetID)
+                .sensoryFeedback(.success, trigger: model.newlyOnboardedBatchID) { before, now in before != nil && now == nil }
+                .onAppear {
+                    if model.newlyOnboardedBatchID != nil {
+                        model.newlyOnboardedBatchID = nil
+                    }
+                }
                 // The gallery gets the whole screen, as it does from Friends.
                 .coversTabBar(openID != nil || openGroupID != nil, key: "desk")
                 // Likes and comments made while a batch was open show on the desk once it closes.

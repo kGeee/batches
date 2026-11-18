@@ -13,6 +13,8 @@ struct RootView: View {
                 SignInView()
             case .needsProfile:
                 CreateProfileView()
+            case .needsFirstBatch:
+                FirstBatchOnboardingView()
             case .signedIn:
                 SignedInTabs()
             }

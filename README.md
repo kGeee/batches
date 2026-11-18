@@ -71,6 +71,7 @@ It needs `web/.env.local` (gitignored) with the same project and publishable key
 ```
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=sb_publishable_...
+VITE_GOOGLE_CLIENT_ID=<client-id>.apps.googleusercontent.com   # optional: Google Photos Picker import
 ```
 
 The dev server answers `/b/<id>` and `/app/...` the way Vercel does in production (see `web/vite.config.js`). The built viewer in `site/app/` is committed, so rebuild it before deploying.
@@ -90,7 +91,7 @@ The dev server answers `/b/<id>` and `/app/...` the way Vercel does in productio
 │   │                               and controls), WindowLayout (wide windows), DuoPreview (debug-only stand-in for a folding iPhone)
 │   ├── Models/                     User, PhotoCollection, Photo, FrameStyle, BatchLook (font, board, background), DeskLayout, EditRecipe, SampleData
 │   ├── Features/
-│   │   ├── Account/                SignInView, CreateProfileView
+│   │   ├── Account/                SignInView, CreateProfileView, FirstBatchOnboardingView
 │   │   ├── Desk/                   Your desk: profile header and your batches, in a grid, sideways or freehand
 │   │   ├── DeskPile/               DeskPileView, PileLayout, FilmRollPileView (canister + curled strip)
 │   │   ├── Gallery/                GalleryView, FilmRollView, PhotoImage, PhotoFrame, FramePickerSheet, BatchFontSheet, BoardEditorView,
@@ -205,7 +206,7 @@ Looks: Neutral, Warm 160, Slide 50, Tungsten 800, Mono 400, Faded. The parameter
 
 ## Accounts and sharing
 
-- **Sign-in**: an emailed six-digit code or link (Supabase Auth), or Sign in with Apple. The first sign-in asks for a name and a unique @handle, checked as you type. A password sign-in exists only for the App Review account, behind "Sign in with a password".
+- **Sign-in & onboarding**: an emailed six-digit code or link (Supabase Auth), or Sign in with Apple. The first sign-in asks for a name and a unique @handle, checked as you type, then guides each new person through making and uploading their first batch (`FirstBatchOnboardingView`) so they land on a desk with a batch already on it. A password sign-in exists only for the App Review account, behind "Sign in with a password".
 - **Profiles and following**: find people by name or handle, open their profile, follow or unfollow, and see follower and following lists. Follows are open (no requests), like Instagram's public accounts.
 - **Who can see a batch**: every batch starts as **Only me**. Share sets it to **Specific people** (only the people you add), **Followers** (your followers plus anyone you add), or **Anyone on Batches** (anyone signed in). The rule lives in the database (`private.can_view_collection`, in `supabase/migrations/`), so the app can't show a batch to the wrong person even if the app has a bug. `MockBackend` follows the same rule, so demo mode behaves the same way.
 - **Group batches**: the owner can let some of the people a batch is shared with add their own photos (`collection_members.can_add`). Each photo records who added it (`photos.added_by`). A contributor edits and removes only their own photos; title, cover, look and sharing stay the owner's.
@@ -246,7 +247,7 @@ Copies go to the private `media` bucket in Supabase Storage at `{owner}/{photo}/
 - **Sign-in** is the same emailed code or link, returning to the page you asked from.
 - **Look.** `web/src/look.js` ports frames, fonts, backgrounds, boards and the pile layout from the Swift code, so a batch reads the same on the web. Change both when one changes.
 - **HEIC.** Safari shows shared copies directly. For Chrome and Firefox, `heic.worker.js` decodes them with `libheif-js` off the main thread, loaded only when first needed.
-- Batches are made on the iPhone; the web shows them, with likes and comments.
+- **Uploading from the web & Google Photos.** You can create batches and add photos to existing or group batches right on the web — from local files (JPEG, PNG, WebP, HEIC, drag-and-drop) or imported directly via the **Google Photos Picker API** (`web/src/googlePhotos.js`, scope `photospicker.mediaitems.readonly`, enabled when `VITE_GOOGLE_CLIENT_ID` is set). Camera EXIF and capture dates are read in the browser before `<canvas>` builds the `s`/`m`/`l` JPEG shared copies with location stripped.
 
 ### Photobooks
 
@@ -302,6 +303,8 @@ The tests in `supabase/tests/database/` cover visibility, group batches, safety,
 **Email sign-in.** The app asks Supabase for a sign-in email whose link returns to `strewn://auth-callback`; the web viewer asks for one that returns to the page you were on (`site_url` and `additional_redirect_urls` in `config.toml` list `strewn://auth-callback`, `https://batches.space/**` and localhost). Tapping the link on the phone opens the app, and `AppModel.open` finishes sign-in. The link only works where it was asked for: it's a PKCE link, and the verifier stays on that phone or browser. In the Simulator, copy the link from the email and run `xcrun simctl openurl <device> "<link>"`, then tap Open. Supabase's built-in mailer sends only its default emails, which have a link and no code, and only a few emails an hour. To also get a six-digit code (the app accepts one, and `otp_length = 6` is already set), set up custom SMTP (Authentication, Emails, SMTP Settings, or `[auth.email.smtp]` in `config.toml`). Then turn on the template entries in `config.toml`, which use `supabase/templates/` with `{{ .Token }}`, and run `supabase config push`.
 
 **Sign in with Apple** needs a paid Apple developer team. The app side is on: `project.yml` writes `Strewn/Resources/Strewn.entitlements` and `Config.xcconfig` has `APPLE_SIGN_IN = YES`. In Supabase, the Apple provider must be on (Authentication, Providers) with the bundle id `com.kevingeorge.strewn` under Client IDs. Native sign-in on the phone needs no secret key. Without the provider the Apple button shows but sign-in fails, so set `APPLE_SIGN_IN = NO` to hide it.
+
+**Google Photos on the web** uses the Google Photos Picker API, which asks Google only for the specific photos a person picks (never `photoslibrary.readonly`). In Google Cloud Console, enable **Google Photos Picker API**, create an **OAuth 2.0 Web Client ID** with `https://batches.space` and `http://localhost:5173` under Authorized JavaScript origins, and set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local` (and in Vercel if rebuilding remotely). Google Identity Services is loaded on demand only when someone clicks **Google Photos**.
 
 ## Open choices
 

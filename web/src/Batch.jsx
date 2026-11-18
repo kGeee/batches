@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as api from './api.js'
 import { backdrop, boardLayout, cover, fontFamily, insets, showsBoard } from './look.js'
+import { AddPhotosSheet, BatchLookSheet, ShareBatchSheet } from './UploadSheet.jsx'
 import {
   Avatar, Framed, Icon, Link, MentionText, Menu, Photo, Sheet, Spinner, Toast,
   appURL, back, batchURL, counted, go, longDate, relative,
 } from './ui.jsx'
+
+const visibilityLabels = { private: 'Only me', people: 'Shared', followers: 'Followers', public: 'Public' }
+const visibilityIcons = { private: 'lock', people: 'users', followers: 'users', public: 'globe' }
 
 /**
  * A batch spread out, as GalleryView draws it in the app: its title page, then its photos as a
@@ -19,7 +23,20 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   const [canAdd, setCanAdd] = useState(false)
   const [tagging, setTagging] = useState(null)
   const [reporting, setReporting] = useState(null)
+  const [addingOpen, setAddingOpen] = useState(false)
+  const [sharingOpen, setSharingOpen] = useState(false)
+  const [lookOpen, setLookOpen] = useState(false)
+  const [confirmRemovePhoto, setConfirmRemovePhoto] = useState(null)
+  const [confirmDeleteBatch, setConfirmDeleteBatch] = useState(false)
+  const [busyAction, setBusyAction] = useState(false)
   const [toast, setToast] = useState(null)
+
+  const refreshBatch = useCallback(async () => {
+    const b = await api.batch(id)
+    const visible = b && !ctx.blocked.has(b.owner_id) ? b : null
+    setBatch(visible)
+    return visible
+  }, [id, ctx.blocked])
 
   useEffect(() => {
     let live = true
@@ -68,6 +85,7 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   if (batch === null) return me ? <NoAccess id={id} photoID={photoID} me={me} /> : signInInstead
 
   const isOwner = !!me && batch.owner_id === me.id
+  const canUpload = isOwner || canAdd
   const look = backdrop(batch)
   const viewing = photoID ? batch.photos.find((p) => p.id === photoID) : null
   const open = (photo) => go(batchURL(batch.id, photo.id), { state: { viewer: true, keepScroll: true } })
@@ -83,13 +101,67 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   }
   const canReport = (photo) => !!me && (photo.added_by ?? batch.owner_id) !== me.id
   const canTag = (photo) => isOwner || (canAdd && photo.added_by === me.id)
+  const canRemovePhoto = (photo) => isOwner || (!!me && photo.added_by === me.id)
+
+  const makeCover = async (photo) => {
+    if (!isOwner || batch.cover_photo_id === photo.id) return
+    const prevCover = batch.cover_photo_id
+    setBatch((b) => (b ? { ...b, cover_photo_id: photo.id } : b))
+    try {
+      await api.updateBatch(batch.id, { cover_photo_id: photo.id })
+      setToast('Cover updated.')
+    } catch {
+      setBatch((b) => (b ? { ...b, cover_photo_id: prevCover } : b))
+      setToast("Couldn't set that cover")
+    }
+  }
+
+  const removePhotoNow = async () => {
+    const target = confirmRemovePhoto
+    if (!target || busyAction) return
+    setBusyAction(true)
+    try {
+      await api.removePhotoFromBatch({ batch, photo: target, isOwner })
+      setConfirmRemovePhoto(null)
+      if (viewing?.id === target.id) closeViewer()
+      await refreshBatch()
+      setToast('Photo removed from batch.')
+    } catch (err) {
+      setToast(err?.message || "Couldn't remove that photo")
+    } finally {
+      setBusyAction(false)
+    }
+  }
+
+  const deleteBatchNow = async () => {
+    if (!isOwner || busyAction) return
+    setBusyAction(true)
+    try {
+      await api.deleteBatch(batch.id)
+      go('/app')
+    } catch (err) {
+      setConfirmDeleteBatch(false)
+      setToast(err?.message || "Couldn't delete this batch")
+      setBusyAction(false)
+    }
+  }
 
   return (
-    <div className={`wall wall-${look.key} ${look.neutral ? 'neutral' : ''}`}
+    <div className={`wall wall-${look.key} ${look.neutral ? 'neutral' : ''} ${canUpload ? 'has-dock' : ''}`}
          data-scheme={look.scheme ?? undefined}
          style={look.color ? { '--wall': look.color } : undefined}>
-      <BatchHeader batch={batch} isOwner={isOwner} guest={!me} onCopy={() => copyLink(null)}
-                   onReport={me && !isOwner ? () => setReporting({ subject: 'this batch', batchID: batch.id, userID: batch.owner_id }) : null} />
+      <BatchHeader
+        batch={batch}
+        isOwner={isOwner}
+        canUpload={canUpload}
+        guest={!me}
+        onCopy={() => copyLink(null)}
+        onAdd={() => setAddingOpen(true)}
+        onShare={() => setSharingOpen(true)}
+        onLook={() => setLookOpen(true)}
+        onDelete={() => setConfirmDeleteBatch(true)}
+        onReport={me && !isOwner ? () => setReporting({ subject: 'this batch', batchID: batch.id, userID: batch.owner_id }) : null}
+      />
       <section className="intro">
         <h1 className="batch-title" style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</h1>
         {batch.description && <p className="description" style={{ fontFamily: fontFamily(batch.font) }}>{batch.description}</p>}
@@ -101,9 +173,18 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
         )}
       </section>
       <BatchBody batch={batch} reactions={reactions} canTag={canTag} onOpen={open} onTag={(p) => setTagging(p)} />
-      {!batch.photos.length && <p className="meta center-text">No photos in this batch yet.</p>}
+      {!batch.photos.length && (
+        <div className="center-text empty-batch">
+          <p className="meta">No photos in this batch yet.</p>
+          {canUpload && (
+            <button className="primary" onClick={() => setAddingOpen(true)}>
+              <Icon name="plus" size={18} /><span>Add photos</span>
+            </button>
+          )}
+        </div>
+      )}
       {me ? (
-        <p className="app-only meta center-text">Editing, adding photos and arranging happen in Batches on iPhone.</p>
+        isOwner && <p className="app-only meta center-text">RAW develop and freehand board arranging are in Batches on iPhone.</p>
       ) : (
         <div className="guest-cta">
           <p className="meta">Sign in to like, comment and see who's tagged.</p>
@@ -113,15 +194,95 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
           </div>
         </div>
       )}
+      {canUpload && (
+        <nav className="batch-dock" aria-label="Batch actions">
+          <button type="button" className="primary dock-add" onClick={() => setAddingOpen(true)}>
+            <Icon name="plus" size={18} /><span>Add photos</span>
+          </button>
+          {isOwner && (
+            <>
+              <button type="button" className="dock-btn" onClick={() => setLookOpen(true)}>
+                <Icon name="frame" size={18} /><span>Look</span>
+              </button>
+              <button type="button" className="dock-btn" onClick={() => setSharingOpen(true)}>
+                <Icon name="share" size={18} /><span>Share</span>
+              </button>
+            </>
+          )}
+        </nav>
+      )}
       {viewing && (
         <Viewer batch={batch} photo={viewing} me={me} isOwner={isOwner} canTag={canTag(viewing)}
                 reactions={reactions?.[viewing.id]}
                 onClose={closeViewer} onStep={(p) => go(batchURL(batch.id, p.id), { replace: true, state: { viewer: true, keepScroll: true } })}
                 onLike={() => like(viewing)} onCopy={() => copyLink(viewing)}
                 onTag={() => setTagging(viewing)}
+                onMakeCover={isOwner && viewing.id !== cover(batch)?.id ? () => makeCover(viewing) : null}
+                onRemove={canRemovePhoto(viewing) ? () => setConfirmRemovePhoto(viewing) : null}
                 onCommentCount={(n) => setCommentCount(viewing.id, n)}
                 onReport={canReport(viewing) ? () => setReporting({ subject: 'this photo', photoID: viewing.id }) : null}
                 onReportComment={(c) => setReporting({ subject: 'this comment', commentID: c.id })} />
+      )}
+      {addingOpen && me && (
+        <AddPhotosSheet
+          batch={batch}
+          me={me}
+          isOwner={isOwner}
+          onClose={() => setAddingOpen(false)}
+          onAdded={(updated, count) => {
+            setAddingOpen(false)
+            if (updated) setBatch(updated)
+            else refreshBatch()
+            setToast(`Added ${counted(count, 'photo')}.`)
+          }}
+        />
+      )}
+      {sharingOpen && isOwner && (
+        <ShareBatchSheet
+          batch={batch}
+          me={me}
+          blocked={ctx.blocked}
+          onClose={() => setSharingOpen(false)}
+          onCopyLink={() => copyLink(null)}
+          onSaved={(nextVisibility) => {
+            setSharingOpen(false)
+            setBatch((b) => (b ? { ...b, visibility: nextVisibility } : b))
+            setToast('Sharing updated.')
+          }}
+        />
+      )}
+      {lookOpen && isOwner && (
+        <BatchLookSheet
+          batch={batch}
+          onClose={() => setLookOpen(false)}
+          onSaved={async () => {
+            setLookOpen(false)
+            await refreshBatch()
+            setToast('Batch updated.')
+          }}
+        />
+      )}
+      {confirmRemovePhoto && (
+        <Sheet title="Remove this photo from the batch?" onClose={() => !busyAction && setConfirmRemovePhoto(null)} className="small">
+          <p className="sheet-text">It leaves the batch for everyone who can see it.</p>
+          <div className="actions">
+            <button className="secondary" disabled={busyAction} onClick={() => setConfirmRemovePhoto(null)}>Cancel</button>
+            <button className="danger" disabled={busyAction} onClick={removePhotoNow}>
+              {busyAction ? 'Removing…' : 'Remove photo'}
+            </button>
+          </div>
+        </Sheet>
+      )}
+      {confirmDeleteBatch && (
+        <Sheet title={`Delete “${batch.title}”?`} onClose={() => !busyAction && setConfirmDeleteBatch(false)} className="small">
+          <p className="sheet-text">This deletes the batch and its shared copies for everyone. This cannot be undone.</p>
+          <div className="actions">
+            <button className="secondary" disabled={busyAction} onClick={() => setConfirmDeleteBatch(false)}>Cancel</button>
+            <button className="danger" disabled={busyAction} onClick={deleteBatchNow}>
+              {busyAction ? 'Deleting…' : 'Delete batch'}
+            </button>
+          </div>
+        </Sheet>
       )}
       {tagging && (
         <TagsSheet photo={tagging} me={me} blocked={ctx.blocked} canManage={canTag(tagging)}
@@ -135,7 +296,7 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   )
 }
 
-function BatchHeader({ batch, isOwner, guest, onCopy, onReport }) {
+function BatchHeader({ batch, isOwner, canUpload, guest, onCopy, onAdd, onShare, onLook, onDelete, onReport }) {
   const [scrolled, setScrolled] = useState(false)
   useEffect(() => {
     const on = () => setScrolled(window.scrollY > 140)
@@ -143,6 +304,8 @@ function BatchHeader({ batch, isOwner, guest, onCopy, onReport }) {
     window.addEventListener('scroll', on, { passive: true })
     return () => window.removeEventListener('scroll', on)
   }, [])
+  const visIcon = visibilityIcons[batch.visibility] ?? 'lock'
+  const visLabel = visibilityLabels[batch.visibility] ?? 'Only me'
   return (
     <header className="gallerybar">
       {guest ? (
@@ -154,9 +317,18 @@ function BatchHeader({ batch, isOwner, guest, onCopy, onReport }) {
         <b style={{ fontFamily: fontFamily(batch.font) }}>{batch.title}</b>
         <span className="meta">{counted(batch.photos.length, 'frame')}{!isOwner && batch.owner ? ` · @${batch.owner.handle}` : ''}</span>
       </div>
+      {isOwner && (
+        <button type="button" className="audience-pill" onClick={onShare} aria-label={`Share, ${visLabel}`}>
+          <Icon name={visIcon} size={15} /><span>{visLabel}</span>
+        </button>
+      )}
       <a className="round" href={appURL(batch.id)} aria-label="Open in Batches" title="Open in Batches"><Icon name="phone" /></a>
       <Menu items={[
+        canUpload && { label: 'Add photos', icon: 'plus', onClick: onAdd },
+        isOwner && { label: 'Look & details', icon: 'frame', onClick: onLook },
+        isOwner && { label: 'Share batch', icon: 'share', onClick: onShare },
         { label: 'Copy link', icon: 'link', onClick: onCopy },
+        isOwner && { label: 'Delete batch', icon: 'trash', destructive: true, onClick: onDelete },
         onReport && { label: 'Report batch', icon: 'flag', onClick: onReport },
       ]} />
     </header>
@@ -357,7 +529,7 @@ function Board({ batch, onOpen }) {
 // The full-frame viewer --------------------------------------------------------------------------
 
 /** Just the photo you opened, as large as it fits and never cropped, with its likes, comments and tags. */
-function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep, onLike, onCopy, onTag, onReport, onReportComment, onCommentCount }) {
+function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep, onLike, onCopy, onTag, onMakeCover, onRemove, onReport, onReportComment, onCommentCount }) {
   const [commentsOpen, setCommentsOpen] = useState(() => window.matchMedia('(min-width: 960px)').matches)
   const [showPins, setShowPins] = useState(true)
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 960px)').matches)
@@ -393,7 +565,9 @@ function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep,
           <span className="viewer-count">{String(index + 1).padStart(2, '0')} of {batch.photos.length}</span>
           <Menu className="dark" items={[
             canTag && { label: 'Tag people', icon: 'tag', onClick: onTag },
+            onMakeCover && { label: 'Make cover', icon: 'star', onClick: onMakeCover },
             { label: 'Copy link to photo', icon: 'link', onClick: onCopy },
+            onRemove && { label: 'Remove from batch', icon: 'trash', destructive: true, onClick: onRemove },
             onReport && { label: 'Report photo', icon: 'flag', onClick: onReport },
           ]} />
         </div>
