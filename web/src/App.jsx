@@ -136,7 +136,7 @@ function SignIn({ shared, linkProblem }) {
       </div>
       <p className="fineprint meta">
         {shared ? 'Only people the owner shared it with can see it. ' : ''}
-        <a href="/privacy">Privacy</a> · <a href="/support">Support</a>
+        <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/support">Support</a>
       </p>
     </main>
   )
