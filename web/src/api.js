@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { defaultFrame } from './look.js'
+import { seedPhotoCache } from './photos.js'
+import { renderShareCopies } from './upload.js'
 
 // The publishable key only: row level security in supabase/migrations decides what each
 // signed-in person can read and write, exactly as it does for the iOS app.
@@ -153,6 +155,240 @@ export async function batchesByIDs(ids) {
 export async function photosByIDs(ids) {
   if (!ids.length) return []
   return check(await supabase.from('photos').select().in('id', ids))
+}
+
+// Creating and updating batches ------------------------------------------------------------------
+
+const shareTiers = ['s', 'm', 'l']
+const objectPaths = (sharePath) => (sharePath ? shareTiers.map((t) => `${sharePath}/${t}.heic`) : [])
+
+export function legacyWallFor(background) {
+  if (background === 'dark' || background === 'desk') return background
+  if (typeof background === 'string' && /^#[0-9a-f]{6}$/i.test(background)) {
+    const v = parseInt(background.slice(1), 16)
+    const [r, g, b] = [(v >> 16) & 255, (v >> 8) & 255, v & 255].map((c) => c / 255)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? 'light' : 'dark'
+  }
+  return 'light'
+}
+
+/** Uploads the three shared-copy tiers into the adder's folder of the `media` bucket. */
+export async function publishPhotoCopies(adderID, photoID, copies, replacingPath = null) {
+  const rev = crypto.randomUUID().replace(/-/g, '').slice(0, 8).toLowerCase()
+  const sharePath = `${adderID.toLowerCase()}/${photoID.toLowerCase()}/${rev}`
+  const uploaded = []
+  try {
+    await Promise.all(shareTiers.map(async (tier) => {
+      const key = `${sharePath}/${tier}.heic`
+      check(await supabase.storage.from('media').upload(key, copies[tier], {
+        contentType: 'image/jpeg',
+        cacheControl: '31536000',
+        upsert: false,
+      }))
+      uploaded.push(key)
+    }))
+  } catch (err) {
+    if (uploaded.length) await supabase.storage.from('media').remove(uploaded).catch(() => {})
+    throw err
+  }
+  await seedPhotoCache(sharePath, copies).catch(() => {})
+  if (replacingPath) {
+    await supabase.storage.from('media').remove(objectPaths(replacingPath)).catch(() => {})
+  }
+  return sharePath
+}
+
+async function prepareAndPublishAll(adderID, items, onProgress) {
+  const ready = []
+  const uploadedPaths = []
+  try {
+    for (let i = 0; i < items.length; i++) {
+      onProgress?.({ done: i, total: items.length })
+      const item = items[i]
+      const photoID = crypto.randomUUID().toLowerCase()
+      const rendered = await renderShareCopies(item)
+      const sharePath = await publishPhotoCopies(adderID, photoID, rendered.copies)
+      uploadedPaths.push(sharePath)
+      ready.push({
+        id: photoID,
+        pixel_width: rendered.pixelWidth,
+        pixel_height: rendered.pixelHeight,
+        caption: item.caption?.trim() ? item.caption.trim() : null,
+        captured_at: item.capturedAt || null,
+        exif: item.exif || null,
+        share_path: sharePath,
+      })
+    }
+    onProgress?.({ done: items.length, total: items.length })
+    return { ready, uploadedPaths }
+  } catch (err) {
+    const keys = uploadedPaths.flatMap(objectPaths)
+    if (keys.length) await supabase.storage.from('media').remove(keys).catch(() => {})
+    throw err
+  }
+}
+
+/**
+ * Makes a new batch on the web: encodes and uploads every photo's s/m/l shared copies first, saves
+ * the batch without its cover, inserts the photos, sets the cover, and applies any share list.
+ */
+export async function createBatch({
+  ownerID,
+  title,
+  description,
+  place,
+  frame,
+  font,
+  background,
+  visibility = 'private',
+  members = [],
+  preparedPhotos,
+  onProgress,
+}) {
+  if (!preparedPhotos?.length) throw new Error('Choose at least one photo to make a batch.')
+  const batchID = crypto.randomUUID().toLowerCase()
+  const { ready, uploadedPaths } = await prepareAndPublishAll(ownerID, preparedPhotos, onProgress)
+
+  const dates = ready.map((p) => p.captured_at).filter(Boolean).sort()
+  const shotOn = dates[0] ?? new Date().toISOString()
+  const resolvedFrame = { ...defaultFrame, ...(frame || {}) }
+  if (background) resolvedFrame.wall = legacyWallFor(background)
+
+  const collectionRow = {
+    id: batchID,
+    owner_id: ownerID,
+    title: (title || '').trim().slice(0, 120) || 'Untitled batch',
+    place: place?.trim() ? place.trim().slice(0, 120) : null,
+    shot_on: shotOn,
+    cover_photo_id: null,
+    frame: resolvedFrame,
+    visibility,
+  }
+  if (description?.trim()) collectionRow.description = description.trim().slice(0, 280)
+  if (font) collectionRow.font = font
+  if (background) collectionRow.background = background
+
+  try {
+    check(await supabase.from('collections').insert(collectionRow))
+    const photoRows = ready.map((p, index) => ({
+      ...p,
+      collection_id: batchID,
+      sort_index: index,
+      added_by: null,
+    }))
+    check(await supabase.from('photos').insert(photoRows))
+    check(await supabase.from('collections').update({ cover_photo_id: photoRows[0].id }).eq('id', batchID))
+
+    const keptMembers = (visibility === 'people' || visibility === 'followers') ? members : []
+    if (keptMembers.length) {
+      check(await supabase.from('collection_members').insert(
+        keptMembers.map((m) => ({
+          collection_id: batchID,
+          user_id: m.id,
+          can_add: !!m.can_add,
+        })),
+      ))
+    }
+    return batchID
+  } catch (err) {
+    await supabase.from('collections').delete().eq('id', batchID).catch(() => {})
+    const keys = uploadedPaths.flatMap(objectPaths)
+    if (keys.length) await supabase.storage.from('media').remove(keys).catch(() => {})
+    throw err
+  }
+}
+
+/**
+ * Appends photos to an existing batch as either its owner (`added_by: null`) or an invited group
+ * contributor (`added_by: me`), matching AppModel.addPhotos / AppModel.contribute on iOS.
+ */
+export async function addPhotosToBatch({
+  batchID,
+  me,
+  isOwner,
+  existingPhotos = [],
+  coverPhotoID = null,
+  preparedPhotos,
+  onProgress,
+}) {
+  if (!preparedPhotos?.length) return batch(batchID)
+  const startSort = existingPhotos.reduce((max, p) => Math.max(max, p.sort_index ?? -1), -1) + 1
+  const { ready, uploadedPaths } = await prepareAndPublishAll(me, preparedPhotos, onProgress)
+  try {
+    const photoRows = ready.map((p, index) => ({
+      ...p,
+      collection_id: batchID,
+      sort_index: startSort + index,
+      added_by: isOwner ? null : me,
+    }))
+    check(await supabase.from('photos').insert(photoRows))
+    if (isOwner && !coverPhotoID && photoRows.length) {
+      check(await supabase.from('collections').update({ cover_photo_id: photoRows[0].id }).eq('id', batchID))
+    }
+    return batch(batchID)
+  } catch (err) {
+    const keys = uploadedPaths.flatMap(objectPaths)
+    if (keys.length) await supabase.storage.from('media').remove(keys).catch(() => {})
+    throw err
+  }
+}
+
+export async function updateBatch(batchID, patch) {
+  const row = {}
+  if ('title' in patch) {
+    const t = (patch.title || '').trim().slice(0, 120)
+    if (t) row.title = t
+  }
+  if ('description' in patch) row.description = (patch.description || '').trim().slice(0, 280)
+  if ('place' in patch) row.place = patch.place?.trim() ? patch.place.trim().slice(0, 120) : null
+  if ('font' in patch) row.font = patch.font || null
+  if ('background' in patch) row.background = patch.background || null
+  if ('frame' in patch) row.frame = patch.frame
+  if ('cover_photo_id' in patch) row.cover_photo_id = patch.cover_photo_id
+  if ('visibility' in patch) row.visibility = patch.visibility
+  if (Object.keys(row).length) {
+    check(await supabase.from('collections').update(row).eq('id', batchID))
+  }
+}
+
+export async function batchMembers(batchID) {
+  const rows = check(await supabase.from('collection_members')
+    .select('user_id, can_add, user:profiles!user_id(*)')
+    .eq('collection_id', batchID))
+  return rows.filter((r) => r.user).map((r) => ({ ...r.user, can_add: r.can_add === true }))
+}
+
+export async function setBatchSharing(batchID, visibility, members = []) {
+  const kept = (visibility === 'people' || visibility === 'followers') ? members : []
+  check(await supabase.from('collection_members').delete().eq('collection_id', batchID))
+  if (kept.length) {
+    check(await supabase.from('collection_members').insert(
+      kept.map((m) => ({ collection_id: batchID, user_id: m.id, can_add: !!m.can_add })),
+    ))
+  }
+  check(await supabase.from('collections').update({ visibility }).eq('id', batchID))
+}
+
+export async function removePhotoFromBatch({ batch: currentBatch, photo, isOwner }) {
+  // Remove copies first while the photo row still grants storage delete to the batch owner.
+  if (photo.share_path) {
+    await supabase.storage.from('media').remove(objectPaths(photo.share_path)).catch(() => {})
+  }
+  check(await supabase.from('photos').delete().eq('id', photo.id).eq('collection_id', currentBatch.id))
+  if (isOwner && currentBatch.cover_photo_id === photo.id) {
+    const remaining = currentBatch.photos.filter((p) => p.id !== photo.id)
+    const nextCover = remaining[0]?.id ?? null
+    check(await supabase.from('collections').update({ cover_photo_id: nextCover }).eq('id', currentBatch.id))
+  }
+}
+
+export async function deleteBatch(batchID) {
+  const rows = check(await supabase.from('photos').select('share_path').eq('collection_id', batchID))
+  check(await supabase.from('collections').delete().eq('id', batchID))
+  const keys = rows.map((r) => r.share_path).filter(Boolean).flatMap(objectPaths)
+  for (let i = 0; i < keys.length; i += 900) {
+    await supabase.storage.from('media').remove(keys.slice(i, i + 900)).catch(() => {})
+  }
 }
 
 // Books ------------------------------------------------------------------------------------------

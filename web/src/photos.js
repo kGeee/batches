@@ -1,8 +1,9 @@
-// Shared copies of photos: small HEIC files in the private `media` bucket at
-// <share_path>/{s,m,l}.heic. As in the app (Strewn/Services/PhotoLinks.swift), links are signed
-// only for photos about to be shown, gathered into small groups, and reused until an hour before
-// they expire. Downloaded copies are kept in the browser's Cache Storage under their path, which
-// never changes for a given copy, and cleared on sign-out.
+// Shared copies of photos: small files in the private `media` bucket at
+// <share_path>/{s,m,l}.heic (HEIC from the iPhone app, JPEG from the web). As in the app
+// (Strewn/Services/PhotoLinks.swift), links are signed only for photos about to be shown, gathered
+// into small groups, and reused until an hour before they expire. Downloaded copies are kept in
+// the browser's Cache Storage under their path, which never changes for a given copy, and cleared
+// on sign-out.
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from './api.js'
 
@@ -14,6 +15,34 @@ export const tierEdges = { s: 320, m: 800, l: 1800 }
 /** The smallest copy that covers this many pixels, allowing 15% upscale, as the app does. */
 export const fitting = (pixels) => ['s', 'm', 'l'].find((t) => tierEdges[t] * 1.15 >= pixels) ?? 'l'
 export const pathFor = (photo, tier) => (photo.share_path ? `${photo.share_path}/${tier}.heic` : null)
+
+// Format detection -------------------------------------------------------------------------------
+// Object paths end in .heic for compatibility with shipped iOS builds, while web uploads store
+// JPEG bytes at those paths. Sniffing the header picks the right MIME type and skips the libheif
+// worker when a copy is already JPEG, PNG or WebP.
+
+const heicBrands = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'])
+
+export function detectImageMime(head) {
+  const b = head instanceof Uint8Array ? head : new Uint8Array(head)
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
+  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+  if (b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46
+      && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp'
+  if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif'
+  if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+    const brand = String.fromCharCode(b[8], b[9], b[10], b[11]).toLowerCase()
+    if (brand === 'avif' || brand === 'avis') return 'image/avif'
+    if (heicBrands.has(brand)) return 'image/heic'
+  }
+  return null
+}
+
+export async function sniffBlobMime(blob) {
+  if (!blob || typeof blob.slice !== 'function') return null
+  const buf = await blob.slice(0, 16).arrayBuffer()
+  return detectImageMime(new Uint8Array(buf))
+}
 
 // Signed links -----------------------------------------------------------------------------------
 
@@ -74,6 +103,18 @@ async function openCache() {
   try { return 'caches' in self ? await caches.open(cacheName) : null } catch { return null }
 }
 
+/** Keeps freshly uploaded copies in local Cache Storage so the batch opens immediately. */
+export async function seedPhotoCache(sharePath, copies) {
+  const cache = await openCache()
+  if (!cache || !sharePath || !copies) return
+  await Promise.all(Object.entries(copies).map(([tier, blob]) => {
+    if (!blob) return null
+    const path = `${sharePath}/${tier}.heic`
+    const type = blob.type || 'image/jpeg'
+    return cache.put(cacheKey(path), new Response(blob, { headers: { 'Content-Type': type } })).catch(() => {})
+  }))
+}
+
 async function bytes(path) {
   const cache = await openCache()
   const hit = await cache?.match(cacheKey(path)).catch(() => null)
@@ -83,8 +124,10 @@ async function bytes(path) {
     if (!url) return null
     const response = await fetch(url).catch(() => null)
     if (response?.ok) {
-      const blob = await response.blob()
-      cache?.put(cacheKey(path), new Response(blob, { headers: { 'Content-Type': 'image/heic' } })).catch(() => {})
+      const raw = await response.blob()
+      const mime = (await sniffBlobMime(raw)) || raw.type || 'image/heic'
+      const blob = raw.type === mime ? raw : new Blob([raw], { type: mime })
+      cache?.put(cacheKey(path), new Response(blob, { headers: { 'Content-Type': mime } })).catch(() => {})
       return blob
     }
     // A refused link (expired, or the photo was re-shared) gets signed again once.
@@ -99,7 +142,7 @@ async function bytes(path) {
 // A 4×4 HEIC. Safari shows it; browsers that can't decode HEIC fail to load it.
 const probe = 'data:image/heic;base64,AAAAKGZ0eXBoZWljAAAAAG1pZjFNaUhFTWlQcm1pYWZNaUhCaGVpYwAAArJtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAA5waXRtAAAAAAABAAAATWlpbmYAAAAAAAMAAAAVaW5mZQIAAAAAAQAAaHZjMQAAAAAVaW5mZQIAAAEAAgAAaHZjMQAAAAAVaW5mZQIAAAEAAwAARXhpZgAAAAAoaXJlZgAAAAAAAAAOYXV4bAACAAEAAQAAAA5jZHNjAAMAAQABAAABpGlwcnAAAAF7aXBjbwAAABNjb2xybmNseAACAAIABoAAAAAMY2xsaQDLAEAAAAAUaXNwZQAAAAAAAAAEAAAABAAAAAlpcm90AAAAABBwaXhpAAAAAAMICAgAAAAOcGl4aQAAAAABCAAAADdhdXhDAAAAAHVybjptcGVnOmhldmM6MjAxNTphdXhpZDoxAAAAAAwAAAAITgGlBAAB/kAAAABxaHZjQwEDcAAAALAAAAAAAB7wAPz9+PgAAAsDoAABABdAAQwB//8DcAAAAwCwAAADAAADAB5wJKEAAQAjQgEBA3AAAAMAsAAAAwAAAwAeoBQgQcCfD+Ie5FlU3AgIGAKiAAEACUQBwGFyyEBTJAAAAHFodmNDAQQIAAAAv8gAAAAAHvAA/Pz4+AAACwOgAAEAF0ABDAH//wQIAAADAL/IAAADAAAeFwJAoQABACNCAQEECAAAAwC/yAAAAwAAHsBQgQcBOwe4gXuRZVNwICAgCKIAAQAJRAHAYdLIQFMkAAAAIWlwbWEAAAAAAAAAAgABBoECAwWIhAACBQMGh4mEAAAAOmlsb2MAAAAARAAAAwABAAAAAQAAA2wAAABOAAIAAAABAAADugAAAC0AAwAAAAEAAALqAAAAggAAAAFtZGF0AAAAAAAAAQ0AAAAGRXhpZgAATU0AKgAAAAgABAEaAAUAAAABAAAAPgEbAAUAAAABAAAARgEoAAMAAAABAAIAAIdpAAQAAAABAAAATgAAAAAAAACQAAAAAQAAAJAAAAABAAOgAQADAAAAAQABAACgAgAEAAAAAQAAAASgAwAEAAAAAQAAAAQAAAAAAAAASigBr6N7DxAfFfA2kSN7+n6Z9mwZeAkLMb/5qXcFH1aXUb8IITeVyEkRgw/ttuS6mOZIEljR30paNTdTFGLsPY1R6YA0GSrjh9DAAAAAKSgBr0X0HRGP4GB5goHeWd+4j5gOX1c1rXHGC/jgV+Idel7QQGUdtiw4'
 let supportsHEIC = null
-function heicSupported() {
+export function heicSupported() {
   supportsHEIC ??= new Promise((resolve) => {
     const img = new Image()
     img.onload = () => resolve(img.naturalWidth > 0)
@@ -112,7 +155,7 @@ function heicSupported() {
 let worker = null
 let nextJob = 0
 const jobs = new Map()
-function decode(blob) {
+export function decodeHEIC(blob) {
   if (!worker) {
     worker = new Worker(new URL('./heic.worker.js', import.meta.url), { type: 'module' })
     worker.onmessage = ({ data }) => {
@@ -143,7 +186,11 @@ export function displayURL(path) {
   const promise = (async () => {
     const blob = await bytes(path)
     if (!blob) return null
-    const shownBlob = (await heicSupported()) ? blob : await decode(blob)
+    const mime = (await sniffBlobMime(blob)) || blob.type || 'image/heic'
+    let shownBlob = blob.type === mime ? blob : new Blob([blob], { type: mime })
+    if (mime === 'image/heic' && !(await heicSupported())) {
+      shownBlob = await decodeHEIC(shownBlob)
+    }
     return URL.createObjectURL(shownBlob)
   })().catch(() => null)
   shown.set(path, promise)

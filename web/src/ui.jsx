@@ -177,6 +177,15 @@ const paths = {
   eyeOff: <g><path d="M3 3l18 18M10.6 10.6a2.8 2.8 0 004 4" /><path d="M9.4 5.8A9.8 9.8 0 0112 5.5C18 5.5 21.5 12 21.5 12a16.8 16.8 0 01-3.2 4.1M6.4 6.7C4.1 8.4 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.7 0 3.2-.4 4.5-1.1" /></g>,
   tag: <g><path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3.5 13.5V4h9.5l7.6 7.6a2 2 0 010 2.8z" /><circle cx="8" cy="8" r="1.4" /></g>,
   bell: <g><path d="M18 8a6 6 0 10-12 0c0 7-3 8.5-3 8.5h18S18 15 18 8z" /><path d="M13.7 20a2 2 0 01-3.4 0" /></g>,
+  upload: <path d="M12 16V4m-5 5l5-5 5 5M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" />,
+  photo: <g><rect x="3.5" y="4.5" width="17" height="15" rx="2.2" /><circle cx="8.8" cy="9.5" r="1.4" /><path d="M4.5 17.5l5-4.8 3.5 3.3 2.8-2.6 3.7 4.1" /></g>,
+  share: <g><path d="M12 15V4m-4.5 4.5L12 4l4.5 4.5" /><path d="M5 13v5.5A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5V13" /></g>,
+  lock: <g><rect x="5" y="11" width="14" height="9.5" rx="2" /><path d="M8 11V7.8a4 4 0 018 0V11" /></g>,
+  users: <g><circle cx="9.5" cy="8.5" r="3.2" /><path d="M3.5 19c.6-3.1 3-5 6-5s5.4 1.9 6 5" /><circle cx="16.8" cy="9.3" r="2.4" /><path d="M16.5 14.3c2.1.4 3.6 1.9 4 4.2" /></g>,
+  globe: <g><circle cx="12" cy="12" r="8.5" /><path d="M3.6 12h16.8M12 3.5c2.5 2.4 3.8 5.4 3.8 8.5s-1.3 6.1-3.8 8.5c-2.5-2.4-3.8-5.4-3.8-8.5S9.5 5.9 12 3.5z" /></g>,
+  frame: <g><rect x="3.5" y="3.5" width="17" height="17" rx="2" /><rect x="7" y="7" width="10" height="10" rx="1" /></g>,
+  edit: <path d="M15.5 4.5l4 4L8 20H4v-4L15.5 4.5z" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
 }
 export function Icon({ name, filled, size = 20, label }) {
   return (
