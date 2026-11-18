@@ -91,7 +91,7 @@ The dev server answers `/b/<id>` and `/app/...` the way Vercel does in productio
 │   │                               and controls), WindowLayout (wide windows), DuoPreview (debug-only stand-in for a folding iPhone)
 │   ├── Models/                     User, PhotoCollection, Photo, FrameStyle, BatchLook (font, board, background), DeskLayout, EditRecipe, SampleData
 │   ├── Features/
-│   │   ├── Account/                SignInView, CreateProfileView
+│   │   ├── Account/                SignInView, CreateProfileView, FirstBatchOnboardingView
 │   │   ├── Desk/                   Your desk: profile header and your batches, in a grid, sideways or freehand
 │   │   ├── DeskPile/               DeskPileView, PileLayout, FilmRollPileView (canister + curled strip)
 │   │   ├── Gallery/                GalleryView, FilmRollView, PhotoImage, PhotoFrame, FramePickerSheet, BatchFontSheet, BoardEditorView,
@@ -206,7 +206,7 @@ Looks: Neutral, Warm 160, Slide 50, Tungsten 800, Mono 400, Faded. The parameter
 
 ## Accounts and sharing
 
-- **Sign-in**: an emailed six-digit code or link (Supabase Auth), or Sign in with Apple. The first sign-in asks for a name and a unique @handle, checked as you type. A password sign-in exists only for the App Review account, behind "Sign in with a password".
+- **Sign-in & onboarding**: an emailed six-digit code or link (Supabase Auth), or Sign in with Apple. The first sign-in asks for a name and a unique @handle, checked as you type, then guides each new person through making and uploading their first batch (`FirstBatchOnboardingView`) so they land on a desk with a batch already on it. A password sign-in exists only for the App Review account, behind "Sign in with a password".
 - **Profiles and following**: find people by name or handle, open their profile, follow or unfollow, and see follower and following lists. Follows are open (no requests), like Instagram's public accounts.
 - **Who can see a batch**: every batch starts as **Only me**. Share sets it to **Specific people** (only the people you add), **Followers** (your followers plus anyone you add), or **Anyone on Batches** (anyone signed in). The rule lives in the database (`private.can_view_collection`, in `supabase/migrations/`), so the app can't show a batch to the wrong person even if the app has a bug. `MockBackend` follows the same rule, so demo mode behaves the same way.
 - **Group batches**: the owner can let some of the people a batch is shared with add their own photos (`collection_members.can_add`). Each photo records who added it (`photos.added_by`). A contributor edits and removes only their own photos; title, cover, look and sharing stay the owner's.

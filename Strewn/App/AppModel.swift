@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppModel {
-    enum AuthState: Equatable { case loading, signedOut, needsProfile, signedIn }
+    enum AuthState: Equatable { case loading, signedOut, needsProfile, needsFirstBatch, signedIn }
 
     private(set) var auth = AuthState.loading
     private(set) var me: User?
@@ -30,6 +30,8 @@ final class AppModel {
     var linkedUser: User?
     /// Set when a notification asks to open the Notifications tab directly.
     var wantsActivityTab = false
+    /// Set when onboarding just finished uploading a first batch, so the desk can greet it.
+    var newlyOnboardedBatchID: UUID?
     var push: PushNotifications?
     var errorMessage: String?
 
@@ -40,6 +42,7 @@ final class AppModel {
     @ObservationIgnored private var deskLoadedFor: UUID?
     @ObservationIgnored private var deliveredNotificationIDs: Set<String> = []
     @ObservationIgnored private var initialActivityLoaded = false
+    @ObservationIgnored private var pendingURL: URL?
 
     init(backend: Backend) { self.backend = backend }
 
@@ -90,9 +93,17 @@ final class AppModel {
     }
 
     func createProfile(handle: String, displayName: String) async throws {
-        me = try await backend.createProfile(handle: handle, displayName: displayName)
-        auth = .signedIn
+        let created = try await backend.createProfile(handle: handle, displayName: displayName)
+        me = created
+        await push?.syncStoredTokenIfNeeded()
         await refresh()
+        if myCollections.isEmpty {
+            auth = .needsFirstBatch
+        } else {
+            Self.setOnboardingCompleted(for: created.id)
+            auth = .signedIn
+            await openPendingURLIfNeeded()
+        }
     }
 
     func signOut() async {
@@ -109,7 +120,10 @@ final class AppModel {
     func deleteAccount() async throws {
         try await backend.deleteAccount()
         local.forget((myCollections + feed).flatMap(\.photos).map(\.id))
-        if let me { Self.forgetDesk(of: me.id) }
+        if let me {
+            Self.forgetDesk(of: me.id)
+            Self.forgetOnboarding(of: me.id)
+        }
         clearSession()
     }
 
@@ -125,6 +139,8 @@ final class AppModel {
         activitySeenAt = .distantPast
         deliveredNotificationIDs = []
         initialActivityLoaded = false
+        newlyOnboardedBatchID = nil
+        pendingURL = nil
         desk = DeskLayout()
         deskLoadedFor = nil
         auth = .signedOut
@@ -135,9 +151,15 @@ final class AppModel {
             guard let user = try await backend.profile(id: id) else { auth = .needsProfile; return }
             me = user
             activitySeenAt = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: Self.activityKey(user.id)))
-            auth = .signedIn
             await push?.syncStoredTokenIfNeeded()
             await refresh()
+            if !myCollections.isEmpty || Self.hasCompletedOnboarding(user.id) {
+                if !myCollections.isEmpty { Self.setOnboardingCompleted(for: user.id) }
+                auth = .signedIn
+                await openPendingURLIfNeeded()
+            } else {
+                auth = .needsFirstBatch
+            }
         } catch {
             errorMessage = error.localizedDescription
             auth = .signedOut
@@ -260,7 +282,7 @@ final class AppModel {
     }
 
     func registerDeviceToken(_ token: String, environment: String) async {
-        guard auth == .signedIn else { return }
+        guard me != nil else { return }
         try? await backend.registerDeviceToken(token, environment: environment)
     }
 
@@ -391,6 +413,20 @@ final class AppModel {
         UserDefaults.standard.removeObject(forKey: deskKey(id))
     }
 
+    private static func onboardingKey(_ id: UUID) -> String { "strewn.onboarded.\(id.uuidString.lowercased())" }
+
+    private static func hasCompletedOnboarding(_ id: UUID) -> Bool {
+        UserDefaults.standard.bool(forKey: onboardingKey(id))
+    }
+
+    private static func setOnboardingCompleted(_ completed: Bool = true, for id: UUID) {
+        UserDefaults.standard.set(completed, forKey: onboardingKey(id))
+    }
+
+    private static func forgetOnboarding(of id: UUID) {
+        UserDefaults.standard.removeObject(forKey: onboardingKey(id))
+    }
+
     // MARK: Safety
 
     func isBlocked(_ user: User) -> Bool { blocked.contains { $0.id == user.id } }
@@ -475,7 +511,10 @@ final class AppModel {
             }
             return
         }
-        guard auth == .signedIn else { return }
+        guard auth == .signedIn else {
+            pendingURL = url
+            return
+        }
         let parts = url.pathComponents.filter { $0 != "/" }
         switch url.host() {
         case "pile":
@@ -497,6 +536,12 @@ final class AppModel {
         default:
             break
         }
+    }
+
+    private func openPendingURLIfNeeded() async {
+        guard let url = pendingURL else { return }
+        pendingURL = nil
+        await open(url)
     }
 
     /// A web link, so Messages and other apps show it as a link with a preview. With the app
@@ -649,6 +694,64 @@ final class AppModel {
 
     // MARK: Piles
 
+    /// Finishes the first-batch onboarding step (after uploading a batch, or when deferred).
+    func completeFirstBatchOnboarding(createdBatchID: UUID? = nil) {
+        if let me { Self.setOnboardingCompleted(for: me.id) }
+        newlyOnboardedBatchID = createdBatchID
+        auth = .signedIn
+        Task { await openPendingURLIfNeeded() }
+    }
+
+    /// Creates the user's first batch during onboarding, encodes and uploads each photo's s/m/l
+    /// HEIC shared copies with frame-by-frame progress, saves the batch, and opens the desk.
+    func createAndUploadFirstBatch(
+        title: String,
+        place: String? = nil,
+        photos: [Photo],
+        frame: FrameStyle,
+        visibility: PhotoCollection.Visibility = .private,
+        onProgress: (Int, Int) -> Void = { _, _ in }
+    ) async {
+        guard let me, let first = photos.first else { return }
+        let id = first.collectionID
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPlace = place?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var uploaded = photos
+        onProgress(0, uploaded.count)
+        for i in uploaded.indices {
+            let photo = uploaded[i]
+            if photo.imageURL.isFileURL {
+                let url = photo.imageURL
+                if let copies = try? await Task.detached(priority: .userInitiated) { try ShareCopyMaker.make(from: url) }.value,
+                   let path = try? await backend.publish(copies, photoID: photo.id, replacing: nil) {
+                    uploaded[i].sharePath = path
+                }
+            }
+            onProgress(i + 1, uploaded.count)
+        }
+
+        let pile = PhotoCollection(
+            id: id,
+            ownerID: me.id,
+            title: cleanTitle.isEmpty ? "Untitled batch" : cleanTitle,
+            place: (cleanPlace?.isEmpty == false) ? cleanPlace : nil,
+            shotOn: uploaded.compactMap(\.capturedAt).min() ?? .now,
+            photos: uploaded,
+            coverPhotoID: first.id,
+            frame: frame,
+            visibility: visibility
+        )
+        uploaded.forEach(local.remember)
+        myCollections.insert(pile, at: 0)
+        do {
+            try await backend.save(pile)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        completeFirstBatchOnboarding(createdBatchID: id)
+    }
+
     func createPile(title: String, photos: [Photo], frame: FrameStyle) {
         guard let me, let first = photos.first else { return }
         let id = first.collectionID
@@ -788,7 +891,7 @@ final class AppModel {
             myCollections[c].photos[p] = photo
             persist(myCollections[c])
             local.remember(photo)
-            if myCollections[c].isShared { await republish(photoID: photo.id, in: collectionID) }
+            if myCollections[c].isShared || photo.sharePath != nil { await republish(photoID: photo.id, in: collectionID) }
         } catch {
             errorMessage = "Couldn't save the edit: \(error.localizedDescription)"
         }
@@ -811,8 +914,9 @@ final class AppModel {
             }
         }
         persist(myCollections[c])
-        if myCollections[c].isShared {
-            for id in edited { await republish(photoID: id, in: collectionID) }
+        for id in edited {
+            let hasCopies = myCollections[c].photos.first(where: { $0.id == id })?.sharePath != nil
+            if myCollections[c].isShared || hasCopies { await republish(photoID: id, in: collectionID) }
         }
     }
 

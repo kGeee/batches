@@ -16,8 +16,10 @@ struct CreateProfileView: View {
         PaperSheet(title: "Make your profile", cancelTitle: "Sign out", onCancel: { Task { await model.signOut() } },
                    confirmTitle: "Continue", confirmEnabled: canContinue, confirmBusy: working, onConfirm: create) {
             VStack(alignment: .leading, spacing: 6) {
+                Text("STEP 1 OF 2 · YOUR PROFILE").metaStyle(.caption)
                 Text("How people find you").titleStyle(.title2, weight: .bold)
-                Text("Friends search for your name or handle.").font(.subheadline).foregroundStyle(.secondary)
+                Text("Friends search for your name or handle. Next, you'll upload your first batch.")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 10) {
                 PaperLabel("Name").padding(.horizontal, 4)
