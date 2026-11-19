@@ -32,6 +32,15 @@ export async function sendCode(email, returnTo) {
   check(await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: returnTo } }))
 }
 
+/**
+ * Leaves for Apple and comes back to `returnTo` with ?code=, which supabase-js trades for a
+ * session (see App's link handling). Needs the Apple provider's Services ID and secret set in
+ * Supabase; the iOS app's native sign-in doesn't use them.
+ */
+export async function signInWithApple(returnTo) {
+  check(await supabase.auth.signInWithOAuth({ provider: 'apple', options: { redirectTo: returnTo } }))
+}
+
 export async function verifyCode(email, token) {
   check(await supabase.auth.verifyOtp({ email, token, type: 'email' }))
 }
