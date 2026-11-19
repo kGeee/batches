@@ -412,6 +412,10 @@ verify_jwt = false
 [functions.inbound-email]
 verify_jwt = false
 
+# Called by the database when a report is filed, with the same shared secret as push.
+[functions.report-alert]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
