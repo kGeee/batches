@@ -217,17 +217,46 @@ final class GooglePhotos: NSObject {
             let mimeType: String?
             let filename: String?
             let mediaFileMetadata: Metadata?
+
+            enum CodingKeys: String, CodingKey { case baseUrl, mimeType, filename, mediaFileMetadata }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                baseUrl = try c.decode(String.self, forKey: .baseUrl)
+                mimeType = try? c.decodeIfPresent(String.self, forKey: .mimeType)
+                filename = try? c.decodeIfPresent(String.self, forKey: .filename)
+                // Metadata is only a fallback for size and EXIF; never fail the import over it.
+                mediaFileMetadata = try? c.decodeIfPresent(Metadata.self, forKey: .mediaFileMetadata)
+            }
         }
+        // Google's JSON sends 64-bit integers as strings ("4032") and others as numbers, so each
+        // numeric field takes either form.
         struct Metadata: Decodable {
             let width: Int?
             let height: Int?
             let photoMetadata: PhotoMetadata?
+
+            enum CodingKeys: String, CodingKey { case width, height, photoMetadata }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                width = c.flexibleDouble(.width).map { Int($0) }
+                height = c.flexibleDouble(.height).map { Int($0) }
+                photoMetadata = try? c.decodeIfPresent(PhotoMetadata.self, forKey: .photoMetadata)
+            }
         }
         struct PhotoMetadata: Decodable {
             let focalLength: Double?
             let apertureFNumber: Double?
             let isoEquivalent: Int?
             let exposureTime: String?
+
+            enum CodingKeys: String, CodingKey { case focalLength, apertureFNumber, isoEquivalent, exposureTime }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                focalLength = c.flexibleDouble(.focalLength)
+                apertureFNumber = c.flexibleDouble(.apertureFNumber)
+                isoEquivalent = c.flexibleDouble(.isoEquivalent).map { Int($0) }
+                exposureTime = try? c.decodeIfPresent(String.self, forKey: .exposureTime)
+            }
         }
     }
 
@@ -320,6 +349,7 @@ final class GooglePhotos: NSObject {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            print("GooglePhotos: couldn't decode \(T.self) from \(url): \(error)")
             throw Failure.message("Google Photos sent a reply Batches couldn't read.")
         }
     }
@@ -375,6 +405,15 @@ private extension Data {
     var base64URLEncoded: String {
         base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+private extension KeyedDecodingContainer {
+    /// A number sent either as a JSON number or as a numeric string; nil when absent or unreadable.
+    func flexibleDouble(_ key: Key) -> Double? {
+        if let value = try? decodeIfPresent(Double.self, forKey: key) { return value }
+        if let text = try? decodeIfPresent(String.self, forKey: key) { return Double(text) }
+        return nil
     }
 }
 
