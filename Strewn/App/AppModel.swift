@@ -32,6 +32,8 @@ final class AppModel {
     var wantsActivityTab = false
     /// Set when onboarding just finished uploading a first batch, so the desk can greet it.
     var newlyOnboardedBatchID: UUID?
+    /// True while the welcome tour is up. New accounts see it once, before their first batch.
+    var showsTour = false
     var push: PushNotifications?
     var errorMessage: String?
 
@@ -99,6 +101,7 @@ final class AppModel {
         await refresh()
         if myCollections.isEmpty {
             auth = .needsFirstBatch
+            offerTourIfNew(created.id)
         } else {
             Self.setOnboardingCompleted(for: created.id)
             auth = .signedIn
@@ -112,6 +115,7 @@ final class AppModel {
         }
         push?.updateBadgeCount(0)
         try? await backend.signOut()
+        GooglePhotos.shared.clearSession()
         clearSession()
     }
 
@@ -123,6 +127,7 @@ final class AppModel {
         if let me {
             Self.forgetDesk(of: me.id)
             Self.forgetOnboarding(of: me.id)
+            UserDefaults.standard.removeObject(forKey: Self.tourKey(me.id))
         }
         clearSession()
     }
@@ -140,6 +145,7 @@ final class AppModel {
         deliveredNotificationIDs = []
         initialActivityLoaded = false
         newlyOnboardedBatchID = nil
+        showsTour = false
         pendingURL = nil
         desk = DeskLayout()
         deskLoadedFor = nil
@@ -159,7 +165,12 @@ final class AppModel {
                 await openPendingURLIfNeeded()
             } else {
                 auth = .needsFirstBatch
+                offerTourIfNew(user.id)
             }
+            #if DEBUG
+            // `-tourPreview YES` opens the tour on launch, to look at it without a new account.
+            if UserDefaults.standard.bool(forKey: "tourPreview") { showsTour = true }
+            #endif
         } catch {
             errorMessage = error.localizedDescription
             auth = .signedOut
@@ -425,6 +436,20 @@ final class AppModel {
 
     private static func forgetOnboarding(of id: UUID) {
         UserDefaults.standard.removeObject(forKey: onboardingKey(id))
+    }
+
+    private static func tourKey(_ id: UUID) -> String { "strewn.toured.\(id.uuidString.lowercased())" }
+
+    /// Shows the welcome tour to someone who hasn't seen it on this phone. Only called on the way
+    /// into the first-batch step, so people who already have batches never get it unasked.
+    private func offerTourIfNew(_ id: UUID) {
+        if !UserDefaults.standard.bool(forKey: Self.tourKey(id)) { showsTour = true }
+    }
+
+    /// Closes the welcome tour and remembers it was seen, whether finished or skipped.
+    func finishTour() {
+        if let me { UserDefaults.standard.set(true, forKey: Self.tourKey(me.id)) }
+        showsTour = false
     }
 
     // MARK: Safety

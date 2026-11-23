@@ -18,7 +18,7 @@ struct CreateProfileView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("STEP 1 OF 2 · YOUR PROFILE").metaStyle(.caption)
                 Text("How people find you").titleStyle(.title2, weight: .bold)
-                Text("Friends search for your name or handle. Next, you'll upload your first batch.")
+                Text("Friends search for your name or handle. Next, a quick tour, then your first batch.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 10) {

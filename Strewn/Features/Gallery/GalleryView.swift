@@ -36,6 +36,7 @@ struct GalleryView: View {
     @State private var confirmingBlock = false
     @State private var picked: [PhotosPickerItem] = []
     @State private var importing = false
+    @State private var google = GooglePhotosPicking()
     @State private var removing: Photo?
     @State private var viewerPhoto: Photo?
     @State private var editingPhoto: Photo?
@@ -95,7 +96,11 @@ struct GalleryView: View {
                     .offset(y: headerPull * 0.9)
                 }
                 if showsDock {
-                    dock
+                    VStack(spacing: 10) {
+                        GooglePhotosStatus(picking: google).padding(.horizontal, 16)
+                        dock
+                    }
+                    .animation(.snappy, value: google.stage)
                         .opacity(appeared ? 1 - pullProgress : 0)
                         .frame(maxHeight: .infinity, alignment: .bottom)
                 }
@@ -198,6 +203,7 @@ struct GalleryView: View {
                 Text("It stays in your Photos library and on this phone.")
             }
         }
+        .googlePhotosAlert(google)
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }
             importing = true
@@ -491,14 +497,27 @@ struct GalleryView: View {
         .accessibilityHidden(true)
     }
 
+    private func importFromGoogle() {
+        Task {
+            let photos = await google.run(collectionID: collection.id)
+            guard !photos.isEmpty else { return }
+            importing = true
+            if isOwner {
+                withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
+            } else {
+                await model.contribute(photos, to: collection.id)
+            }
+            importing = false
+        }
+    }
+
     /// What you do to the batch, in reach and by name. A friend who can add photos gets just that.
     private var dock: some View {
         let neutral = collection.backdrop.neutralControls
         return HStack(spacing: 2) {
-            PhotosPicker(selection: $picked, maxSelectionCount: 60, matching: .images,
-                         preferredItemEncoding: .current, photoLibrary: .shared()) {
+            PhotoSourcePicker(selection: $picked, onGooglePhotos: importFromGoogle) {
                 HStack(spacing: 7) {
-                    if importing { ProgressView().tint(neutral ? Color(uiColor: .systemBackground) : Color.onAccent) }
+                    if importing || google.isRunning { ProgressView().tint(neutral ? Color(uiColor: .systemBackground) : Color.onAccent) }
                     else { Image(systemName: "plus").font(.body.weight(.bold)) }
                     Text("Add photos").font(.subheadline.weight(.semibold)).lineLimit(1)
                 }
@@ -508,7 +527,7 @@ struct GalleryView: View {
                 .frame(height: 48)
                 .background(neutral ? Color.primary : Color.strewnAccent, in: Capsule())
             }
-            .disabled(importing)
+            .disabled(importing || google.isRunning)
             if isOwner {
                 dockButton("Frames", "square.inset.filled") { showFrames = true }
                 if frame.kind != .filmStrip {

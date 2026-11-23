@@ -943,6 +943,7 @@ struct AccountSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var pushStatus: UNAuthorizationStatus = .notDetermined
+    @State private var showTour = false
 
     private var frameCount: Int { model.myCollections.reduce(0) { $0 + $1.photos.count } }
     private var recentCovers: [Photo] { model.myCollections.compactMap(\.cover).prefix(4).map { $0 } }
@@ -988,6 +989,14 @@ struct AccountSheet: View {
                             Divider().padding(.leading, 48)
                             NavigationLink { BlockedPeopleView() } label: {
                                 row("Blocked", systemImage: "hand.raised", detail: model.blocked.isEmpty ? nil : "\(model.blocked.count)")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.card, in: RoundedRectangle(cornerRadius: 14))
+
+                        VStack(spacing: 0) {
+                            Button { showTour = true } label: {
+                                row("How Batches works", systemImage: "sparkles.rectangle.stack", chevron: false)
                             }
                         }
                         .buttonStyle(.plain)
@@ -1040,6 +1049,7 @@ struct AccountSheet: View {
             .paperNavigationTitle("Account")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .fullScreenCover(isPresented: $showTour) { WelcomeTourView(finishTitle: "Done") { showTour = false } }
             .task {
                 await model.push?.refreshAuthorizationStatus()
                 pushStatus = model.push?.authorizationStatus ?? .notDetermined

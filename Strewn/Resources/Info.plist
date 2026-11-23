@@ -25,6 +25,7 @@
         </dict>
     </array>
     <key>StrewnAppleSignIn</key><string>$(APPLE_SIGN_IN)</string>
+    <key>GooglePhotosClientID</key><string>$(GOOGLE_IOS_CLIENT_ID)</string>
     <key>StrewnSupportEmail</key><string>$(SUPPORT_EMAIL)</string>
     <key>StrewnPrivacyPolicyURL</key><string>$(PRIVACY_POLICY_URL)</string>
     <key>SupabaseURL</key><string>$(SUPABASE_URL)</string>

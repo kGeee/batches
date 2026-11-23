@@ -306,6 +306,8 @@ The tests in `supabase/tests/database/` cover visibility, group batches, safety,
 
 **Google Photos on the web** uses the Google Photos Picker API, which asks Google only for the specific photos a person picks (never `photoslibrary.readonly`). In Google Cloud Console, enable **Google Photos Picker API**, create an **OAuth 2.0 Web Client ID** with `https://batches.space` and `http://localhost:5173` under Authorized JavaScript origins, and set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local` (and in Vercel if rebuilding remotely). Google Identity Services is loaded on demand only when someone clicks **Google Photos**.
 
+**Google Photos in the iOS app** uses the same Picker API without any Google SDK (`Strewn/Services/GooglePhotos.swift`): OAuth 2.0 with PKCE in an `ASWebAuthenticationSession`, then Google's picker in a second web sheet that closes itself once the selection is done. In the same Google Cloud project, create an **OAuth client ID** of type **iOS** with bundle ID `com.kevingeorge.strewn` (team ID `7CK43PG7GZ`), and set `GOOGLE_IOS_CLIENT_ID = <id>.apps.googleusercontent.com` in `Strewn/Resources/Config.local.xcconfig`. The redirect is the client ID reversed (`com.googleusercontent.apps.<id>:/oauth2redirect`), which the web session catches itself, so Info.plist needs no URL scheme. Leave it empty to hide the option.
+
 ## Open choices
 
 - Open follows, or follow requests for people who want them?

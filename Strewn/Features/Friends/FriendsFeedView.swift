@@ -315,6 +315,7 @@ private struct FeedCard: View {
     @Environment(AppModel.self) private var model
     @State private var picked: [PhotosPickerItem] = []
     @State private var importing = false
+    @State private var google = GooglePhotosPicking()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -350,9 +351,12 @@ private struct FeedCard: View {
                 }
                 .padding(.top, 2)
             }
+            GooglePhotosStatus(picking: google)
         }
         .padding(14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
+        .animation(.snappy, value: google.stage)
+        .googlePhotosAlert(google)
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }
             importing = true
@@ -370,10 +374,9 @@ private struct FeedCard: View {
     }
 
     private var addYours: some View {
-        PhotosPicker(selection: $picked, maxSelectionCount: 60, matching: .images,
-                     preferredItemEncoding: .current, photoLibrary: .shared()) {
+        PhotoSourcePicker(selection: $picked, onGooglePhotos: importFromGoogle) {
             HStack(spacing: 6) {
-                if importing { ProgressView().tint(Color.onAccent) } else { Image(systemName: "plus").font(.footnote.weight(.bold)) }
+                if importing || google.isRunning { ProgressView().tint(Color.onAccent) } else { Image(systemName: "plus").font(.footnote.weight(.bold)) }
                 Text("Add yours").font(.subheadline.weight(.semibold))
             }
             .foregroundStyle(Color.onAccent)
@@ -381,8 +384,18 @@ private struct FeedCard: View {
             .frame(height: 34)
             .background(Color.strewnAccent, in: Capsule())
         }
-        .disabled(importing)
+        .disabled(importing || google.isRunning)
         .accessibilityLabel("Add your photos to \(collection.title)")
+    }
+
+    private func importFromGoogle() {
+        Task {
+            let photos = await google.run(collectionID: collection.id)
+            guard !photos.isEmpty else { return }
+            importing = true
+            await model.contribute(photos, to: collection.id)
+            importing = false
+        }
     }
 
     private func badge(_ title: String, _ symbol: String) -> some View {

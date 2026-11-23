@@ -11,6 +11,9 @@ struct NewPileSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selection: [PhotosPickerItem] = []
+    /// Picks already downloaded from Google Photos, ready to go with the library picks.
+    @State private var googlePicked: [Photo] = []
+    @State private var google = GooglePhotosPicking()
     @State private var previews: [UIImage] = []
     @State private var title = ""
     @State private var frame = FrameStyle()
@@ -22,7 +25,10 @@ struct NewPileSheet: View {
             PaperHeader(title: "New batch", onCancel: { dismiss() })
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    picker
+                    VStack(spacing: 12) {
+                        picker
+                        if GooglePhotos.isConfigured { googleButton }
+                    }
                     VStack(alignment: .leading, spacing: 6) {
                         label("Name")
                         TextField("Big Sur, one afternoon", text: $title)
@@ -52,7 +58,43 @@ struct NewPileSheet: View {
         }
         .background(DeskMatBackground())
         .tint(.strewnAccent)
-        .task(id: selection) { await loadPreviews() }
+        .task(id: PreviewKey(library: selection, google: googlePicked.map(\.id))) { await loadPreviews() }
+        .googlePhotosAlert(google)
+        .animation(.snappy, value: google.stage)
+    }
+
+    private struct PreviewKey: Equatable {
+        let library: [PhotosPickerItem]
+        let google: [UUID]
+    }
+
+    private var pickedCount: Int { selection.count + googlePicked.count }
+
+    /// Adds picks from Google Photos to the stack; the system picker stays the big target above.
+    @ViewBuilder private var googleButton: some View {
+        if google.isRunning {
+            GooglePhotosStatus(picking: google)
+        } else {
+            Button {
+                Task {
+                    let photos = await google.run(collectionID: UUID(), maxCount: max(1, 60 - selection.count))
+                    if !photos.isEmpty { googlePicked = photos }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    GooglePhotosMark(size: 17)
+                    Text(googlePicked.isEmpty ? "From Google Photos" : "\(googlePicked.count) from Google Photos · change")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 16)
+                .frame(height: 40)
+                .background(Color.card, in: Capsule())
+                .overlay(Capsule().strokeBorder(.foreground.opacity(0.12), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(isImporting)
+        }
     }
 
     /// The stack of chosen prints, which is also the button that opens the picker.
@@ -86,8 +128,8 @@ struct NewPileSheet: View {
             .frame(maxWidth: .infinity)
             .frame(height: 280)
             .overlay(alignment: .bottomTrailing) {
-                if !selection.isEmpty {
-                    Text("\(selection.count) \(selection.count == 1 ? "photo" : "photos") · change")
+                if pickedCount > 0 {
+                    Text("\(pickedCount) \(pickedCount == 1 ? "photo" : "photos") · change")
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(.ultraThinMaterial, in: Capsule())
@@ -138,15 +180,15 @@ struct NewPileSheet: View {
     private var createButton: some View {
         Button { Task { await create() } } label: {
             Group {
-                if isImporting { ProgressView().tint(Color.onAccent) } else { Text(selection.isEmpty ? "Choose photos to begin" : "Make the batch") }
+                if isImporting { ProgressView().tint(Color.onAccent) } else { Text(pickedCount == 0 ? "Choose photos to begin" : "Make the batch") }
             }
             .font(.headline)
             .frame(maxWidth: .infinity, minHeight: 30)
         }
         .buttonStyle(.borderedProminent)
-        .foregroundStyle(selection.isEmpty ? Color.secondary : Color.onAccent)
+        .foregroundStyle(pickedCount == 0 ? Color.secondary : Color.onAccent)
         .controlSize(.large)
-        .disabled(selection.isEmpty || isImporting)
+        .disabled(pickedCount == 0 || isImporting || google.isRunning)
         .padding(.horizontal, 20)
         .padding(.bottom, 8)
     }
@@ -164,6 +206,9 @@ struct NewPileSheet: View {
                 images.append(image)
             }
         }
+        for photo in googlePicked.prefix(max(0, Self.fan.count - images.count)) {
+            if let image = PhotoImport.thumbnail(at: photo.imageURL, maxPixelSide: 400) { images.append(image) }
+        }
         guard !Task.isCancelled else { return }
         previews = images
     }
@@ -171,7 +216,14 @@ struct NewPileSheet: View {
     private func create() async {
         isImporting = true
         defer { isImporting = false }
-        let photos = await PhotoImport.photos(from: selection, collectionID: UUID())
+        let collectionID = UUID()
+        let library = await PhotoImport.photos(from: selection, collectionID: collectionID)
+        let photos = (library + googlePicked).enumerated().map { index, photo in
+            var photo = photo
+            photo.collectionID = collectionID
+            photo.sortIndex = index
+            return photo
+        }
         model.createPile(title: title.isEmpty ? "Untitled batch" : title, photos: photos, frame: frame)
         dismiss()
     }
@@ -233,6 +285,10 @@ enum PhotoImport {
         return decodeThumbnail(from: CGImageSourceCreateWithData(data as CFData, nil), maxPixelSide: maxPixelSide)
     }
 
+    static func thumbnail(at url: URL, maxPixelSide: Int) -> UIImage? {
+        decodeThumbnail(from: CGImageSourceCreateWithURL(url as CFURL, nil), maxPixelSide: maxPixelSide)
+    }
+
     private static func decodeThumbnail(from source: CGImageSource?, maxPixelSide: Int) -> UIImage? {
         guard let source else { return nil }
         let index = CGImageSourceGetPrimaryImageIndex(source)
@@ -266,14 +322,14 @@ enum PhotoImport {
         }
     }
 
-    private struct ImageMetadata {
+    struct ImageMetadata {
         let width: Int
         let height: Int
         let capturedAt: Date?
         let exif: Photo.Exif?
     }
 
-    private static func metadata(of url: URL, fallbackAsset: PHAsset?) -> ImageMetadata {
+    static func metadata(of url: URL, fallbackAsset: PHAsset?) -> ImageMetadata {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             let w = max(1, fallbackAsset?.pixelWidth ?? 3)
             let h = max(1, fallbackAsset?.pixelHeight ?? 2)
@@ -330,7 +386,7 @@ enum PhotoImport {
         return exifDateFormatter.date(from: string)
     }
 
-    private static func formatShutter(_ seconds: Double) -> String? {
+    static func formatShutter(_ seconds: Double) -> String? {
         guard seconds > 0 else { return nil }
         if seconds >= 1 {
             return seconds == seconds.rounded() ? "\(Int(seconds))s" : String(format: "%.1fs", seconds)

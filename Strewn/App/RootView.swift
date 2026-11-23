@@ -20,6 +20,11 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: model.auth)
+        .fullScreenCover(isPresented: $model.showsTour) {
+            WelcomeTourView(finishTitle: model.auth == .needsFirstBatch ? "Start your first batch" : "Get started") {
+                model.finishTour()
+            }
+        }
         .readsWindowLayout()
         .onOpenURL { url in Task { await model.open(url) } }
         .fullScreenCover(item: $model.linkedPile) { LinkedPileView(pile: $0) }
