@@ -110,10 +110,14 @@ final class PushNotifications: NSObject, UIApplicationDelegate, UNUserNotificati
         [.banner, .list, .sound]
     }
 
+    // Uses the completion-handler form, not `async`: the async form's @objc thunk calls UIKit's
+    // completion handler from a cooperative-pool thread, and UIKit asserts it runs on the main
+    // thread (it updates the app snapshot), which aborted the app on notification taps.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
         let info = response.notification.request.content.userInfo
         let notificationID = info["notification_id"] as? String
         let urlString = info["url"] as? String
@@ -121,7 +125,8 @@ final class PushNotifications: NSObject, UIApplicationDelegate, UNUserNotificati
         let photoID = (info["photo_id"] as? String).flatMap(UUID.init(uuidString:))
         let handle = info["actor_handle"] as? String
 
-        await MainActor.run {
+        DispatchQueue.main.async {
+            defer { completionHandler() }
             guard let model = self.model else { return }
             if let notificationID {
                 model.markNotificationRead(notificationID)
