@@ -9,11 +9,15 @@ export const formats = {
     id: 'square8',
     title: 'Square',
     detail: '8 × 8 in hardcover',
-    trimInches: 8,
-    // Printers ask for 1/8 in past the trim on every side, and keep anything important 3/8 in inside it.
-    bleedInches: 0.125,
+    // Gelato's "8x8" book is 200 mm square, a little under 8 in; pages are made at exactly that
+    // size so nothing is scaled or cropped at print.
+    trimInches: 200 / 25.4,
+    // Gelato asks for 3 mm past the trim on every side of a photo book page and anything important
+    // at least 4 mm inside it; we keep it 3/8 in inside.
+    bleedInches: 3 / 25.4,
     safeInches: 0.375,
-    minPages: 20,
+    // Gelato's photo books run from 30 to 200 pages.
+    minPages: 30,
     maxPages: 120,
     priceCents: 3900,
     extraPageCents: 100,
@@ -119,8 +123,43 @@ export function coverPhotoBox(aspect) {
   const w = Math.min(coverLayout.photoMaxW, coverLayout.photoMaxH * aspect)
   return { w, h: w / aspect, x: 0.5, y: coverLayout.photoCenterY }
 }
-/** Spine width in inches: thicker with more pages. */
+/** Spine width in inches: thicker with more pages. Only an estimate; the printer's own measurements win. */
 export const spineInches = (pages) => 0.25 + pages * 0.0025
+
+const mm = (v) => v / 25.4
+
+/**
+ * The cover as one flat sheet, in inches: the sheet's size, and where the back, spine and front sit
+ * on it (each `{ x, y, w, h }` from the sheet's top left). `printer` is Gelato's cover-dimensions
+ * answer for this page count; with it the sheet is exactly what Gelato prints. Without it the
+ * sheet is estimated from Gelato's published hardcover example (a 17 mm wrap round the boards, a
+ * 3 mm board edge and 8 mm hinges either side of the spine), good for a preview but not for print.
+ */
+export function coverSheet(format, pages, printer = null) {
+  const exact = printer && sheetFromPrinter(printer)
+  if (exact) return exact
+  const trim = format.trimInches
+  const edge = mm(17 + 3), joint = mm(8), spine = spineInches(pages)
+  const back = { x: edge, y: edge, w: trim, h: trim }
+  const spineBox = { x: edge + trim + joint, y: edge, w: spine, h: trim }
+  const front = { x: spineBox.x + spine + joint, y: edge, w: trim, h: trim }
+  return { w: front.x + trim + edge, h: trim + 2 * edge, back, spine: spineBox, front, estimate: true }
+}
+
+/** Gelato's cover-dimensions answer (millimetres) as a cover sheet in inches, or null if it doesn't add up. */
+export function sheetFromPrinter(d) {
+  if (!d || (d.measureUnit && d.measureUnit !== 'mm')) return null
+  const box = (a) => (a && [a.left ?? 0, a.top ?? 0, a.width, a.height].every((v) => Number.isFinite(v) && v >= 0)
+    ? { x: mm(a.left ?? 0), y: mm(a.top ?? 0), w: mm(a.width), h: mm(a.height) } : null)
+  const back = box(d.contentBackSize), spine = box(d.spineSize), front = box(d.contentFrontSize)
+  if (!back || !spine || !front || !back.w || !front.w) return null
+  // Hardcover: the wraparound is the whole sheet. Softcover: the bleed area is, or else the content's edges.
+  const outer = box(d.wraparoundInsideSize) ?? box(d.bleedSize)
+  const w = outer ? outer.x + outer.w : front.x + front.w
+  const h = outer ? outer.y + outer.h : Math.max(back.y + back.h, front.y + front.h)
+  if (!(w >= front.x + front.w) || !(h >= front.y + front.h)) return null
+  return { w, h, back, spine, front, estimate: false }
+}
 
 // Pages and spreads ----------------------------------------------------------------------------
 
@@ -138,3 +177,28 @@ export function spreadsOf(pages) {
 export const spreadIndexOf = (pageIndex) => (pageIndex === 0 ? 0 : Math.floor((pageIndex - 1) / 2) + 1)
 /** Page 1 and every odd page is on the right. */
 export const isLeftPage = (pageIndex) => pageIndex % 2 === 1
+
+const usStates = new Set(('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY ' +
+  'NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR').split(' '))
+
+/** A US shipping address tidied for the printer, and the first thing wrong with it, if any. */
+export function cleanShipping(a) {
+  const t = (s) => String(s ?? '').replace(/\s+/g, ' ').trim()
+  const ship = {
+    firstName: t(a.firstName), lastName: t(a.lastName), line1: t(a.line1), line2: t(a.line2),
+    city: t(a.city), state: t(a.state).toUpperCase(), zip: t(a.zip),
+  }
+  const problem =
+    !ship.firstName || !ship.lastName ? 'Add a first and last name.'
+    : !ship.line1 ? 'Add the street address.'
+    : !ship.city ? 'Add the city.'
+    : !usStates.has(ship.state) ? 'Use the two-letter state, like CA.'
+    : !/^\d{5}(-\d{4})?$/.test(ship.zip) ? 'Use a five-digit ZIP code.'
+    // The printer's limits.
+    : [ship.firstName, ship.lastName].some((s) => s.length > 25) ? 'Keep each name to 25 characters.'
+    : [ship.line1, ship.line2].some((s) => s.length > 35) ? 'Keep each address line to 35 characters.'
+    : ship.city.length > 30 ? 'Keep the city to 30 characters.'
+    : null
+  return { ship, problem }
+}
+

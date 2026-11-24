@@ -2,21 +2,26 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api.js'
 import { counted, go, longDate } from '../ui.jsx'
-import { money, priceCents } from './format.js'
+import { cleanShipping, money, priceCents } from './format.js'
 import { preflight } from './preflight.js'
-const statusTitle = { requested: 'Requested', paid: 'Paid', printing: 'Printing', shipped: 'Shipped', cancelled: 'Cancelled' }
+const statusTitle = { requested: 'Requested', draft: 'Draft at printer', paid: 'Paid', printing: 'Printing', shipped: 'Shipped', cancelled: 'Cancelled', failed: 'Refused by printer' }
+const blankShip = { firstName: '', lastName: '', line1: '', line2: '', city: '', state: '', zip: '' }
+const cents = (c, currency) => (currency && currency !== 'USD' ? `${(c / 100).toFixed(2)} ${currency}` : money(c))
 
 export function OrderView({ bag }) {
   const { id, doc, photos, batches, me, format, save, revision, setFocus } = bag
   const check = useMemo(() => preflight(doc, photos), [doc, photos])
   const [quantity, setQuantity] = useState(1)
-  const [files, setFiles] = useState(null)        // { revision, interior, cover, interiorURL, coverURL }
+  const [files, setFiles] = useState(null)        // { revision, path, url, pages, size, estimated }
   const [progress, setProgress] = useState(null)  // { done, total, step }
   const [problem, setProblem] = useState('')
   const [orders, setOrders] = useState([])
-  const [ordered, setOrdered] = useState(false)
+  const [ordered, setOrdered] = useState(0)
+  const [ship, setShip] = useState(blankShip)
+  const [current, setCurrent] = useState(null)   // the order being priced or sent, as the server answered
+  const [busy, setBusy] = useState(null)
   useEffect(() => { api.ordersOf(id).then(setOrders).catch(() => {}) }, [id, ordered])
-  useEffect(() => () => { if (files) { URL.revokeObjectURL(files.interiorURL); URL.revokeObjectURL(files.coverURL) } }, [files])
+  useEffect(() => () => { if (files) URL.revokeObjectURL(files.url) }, [files])
 
   const stale = files && (files.revision !== revision.current || save !== 'saved')
   const each = priceCents(format, doc.pages.length)
@@ -26,29 +31,47 @@ export function OrderView({ bag }) {
     setProblem('')
     const snapshot = doc, rev = revision.current
     try {
-      setProgress({ done: 0, total: snapshot.pages.length, step: 'pages' })
-      const { coverPDF, interiorPDF } = await import('./print.js')
-      const data = { photos, batches, me }
-      const interior = await interiorPDF(snapshot, data, (done, total) => setProgress({ done, total, step: 'pages' }))
       setProgress({ done: 0, total: 1, step: 'cover' })
-      const cover = await coverPDF(snapshot, data)
+      const [{ bookPDF }, printer] = await Promise.all([import('./print.js'), api.coverDimensions(snapshot.pages.length)])
+      const { blob, sheet } = await bookPDF(snapshot, { photos, batches, me }, {
+        printer, onProgress: (step, done, total) => setProgress({ step, done, total }),
+      })
       setProgress({ done: 0, total: 1, step: 'upload' })
-      const base = `${me}/${id}/${rev}`
-      await api.uploadPrint(`${base}/interior.pdf`, interior)
-      await api.uploadPrint(`${base}/cover.pdf`, cover)
-      setFiles({ revision: rev, interior: `${base}/interior.pdf`, cover: `${base}/cover.pdf`, pages: snapshot.pages.length,
-        interiorURL: URL.createObjectURL(interior), coverURL: URL.createObjectURL(cover), size: interior.size + cover.size })
+      const path = `${me}/${id}/${rev}/book.pdf`
+      await api.uploadPrint(path, blob)
+      setFiles({ revision: rev, path, pages: snapshot.pages.length, url: URL.createObjectURL(blob), size: blob.size, estimated: sheet.estimate })
     } catch (e) {
       setProblem(e.message ?? String(e))
     } finally { setProgress(null) }
   }
 
-  const order = async () => {
-    setProblem('')
+  const shipField = (key, label, props = {}) => (
+    <input aria-label={label} placeholder={label} value={ship[key]} disabled={!!busy} {...props}
+           onChange={(e) => { setShip((a) => ({ ...a, [key]: e.target.value })); setCurrent(null) }} />
+  )
+
+  // Saves the order with its address and file, then asks the printer what it costs to make and ship.
+  const quote = async () => {
+    const { ship: clean, problem: wrong } = cleanShipping(ship)
+    if (wrong) return setProblem(wrong)
+    setProblem(''); setBusy('Getting a price')
     try {
-      await api.orderBook({ bookID: id, revision: files.revision, quantity, interiorPath: files.interior, coverPath: files.cover, pageCount: files.pages })
-      setOrdered(true)
-    } catch (e) { setProblem(e.message) }
+      const orderID = await api.orderBook({ bookID: id, revision: files.revision, quantity, printPath: files.path, pageCount: files.pages, ship: clean })
+      const answer = await api.bookOrder('quote', orderID)
+      setCurrent({ ...answer, id: answer.id ?? orderID })
+      if (answer.error) setProblem(answer.error)
+      setOrdered((n) => n + 1)
+    } catch (e) { setProblem(e.message) } finally { setBusy(null) }
+  }
+
+  const place = async () => {
+    setProblem(''); setBusy('Sending to the printer')
+    try {
+      const answer = await api.bookOrder('place', current.id)
+      setCurrent((c) => ({ ...c, ...answer }))
+      if (answer.error) setProblem(answer.error)
+      setOrdered((n) => n + 1)
+    } catch (e) { setProblem(e.message) } finally { setBusy(null) }
   }
 
   return (
@@ -87,8 +110,8 @@ export function OrderView({ bag }) {
       </section>
 
       <section className="card stacked">
-        <h2 className="title">Print files</h2>
-        <p className="meta">Every page drawn at 300 dpi from the largest copies shared with you, with an eighth of an inch of bleed.</p>
+        <h2 className="title">Print file</h2>
+        <p className="meta">One PDF for the printer: the cover, then every page drawn at 300 dpi from the largest copies shared with you, with 3 mm of bleed.</p>
         {progress && (
           <>
             <div className="progress"><span style={{ width: `${(progress.done / progress.total) * 100}%` }} /></div>
@@ -97,32 +120,54 @@ export function OrderView({ bag }) {
         )}
         {!progress && (!files || stale) && (
           <button className="primary" disabled={check.blocked || save !== 'saved'} onClick={make} style={{ justifySelf: 'start' }}>
-            {stale ? 'Make them again' : 'Make print files'}
+            {stale ? 'Make it again' : 'Make print file'}
           </button>
         )}
         {check.blocked && <p className="meta">Fix the checks marked red first.</p>}
         {save !== 'saved' && !check.blocked && <p className="meta">Waiting for your changes to save…</p>}
         {files && !progress && (
           <div className="filelinks">
-            <a className="button secondary small" href={files.interiorURL} download={`${doc.title} - pages.pdf`}>Pages PDF</a>
-            <a className="button secondary small" href={files.coverURL} download={`${doc.title} - cover.pdf`}>Cover PDF</a>
+            <a className="button secondary small" href={files.url} download={`${doc.title}.pdf`}>Book PDF</a>
             <span className="meta" style={{ alignSelf: 'center' }}>{(files.size / 1048576).toFixed(1)} MB{stale ? ' · out of date, the book has changed' : ''}</span>
           </div>
         )}
+        {files && !progress && files.estimated && <p className="meta">The cover is sized from an estimate until printing is connected, so its spine and wrap may change.</p>}
         {problem && <p className="problem">{problem}</p>}
       </section>
 
       <section className="card stacked">
         <h2 className="title">Order</h2>
-        {ordered ? (
-          <p className="lede">Requested. Paying and shipping details come next; we'll email you when your copy is ready to pay for.</p>
-        ) : (
-          <>
-            <p className="meta">Printing isn't open to everyone yet. Requesting saves these exact files with your order.</p>
-            <button className="primary" disabled={!files || stale || !!progress} onClick={order} style={{ justifySelf: 'start' }}>
-              Request {counted(quantity, 'copy', 'copies')} · {money(each * quantity + format.shippingCents)}
-            </button>
-          </>
+        <p className="meta">Printed and bound by Gelato, shipped anywhere in the US. Printing isn't open to everyone yet: orders go to the printer as drafts, which it keeps but never prints or charges.</p>
+        <div className="shipping">
+          <div className="pair">{shipField('firstName', 'First name', { autoComplete: 'given-name' })}{shipField('lastName', 'Last name', { autoComplete: 'family-name' })}</div>
+          {shipField('line1', 'Street address', { autoComplete: 'address-line1' })}
+          {shipField('line2', 'Apartment, suite (optional)', { autoComplete: 'address-line2' })}
+          <div className="citystatezip">
+            {shipField('city', 'City', { autoComplete: 'address-level2' })}
+            {shipField('state', 'State', { autoComplete: 'address-level1', maxLength: 2 })}
+            {shipField('zip', 'ZIP', { autoComplete: 'postal-code', inputMode: 'numeric', maxLength: 10 })}
+          </div>
+        </div>
+        {!current?.quote && (
+          <button className="primary" disabled={!files || stale || !!progress || !!busy} onClick={quote} style={{ justifySelf: 'start' }}>
+            {busy ?? `Get the printer's price for ${counted(quantity, 'copy', 'copies')}`}
+          </button>
+        )}
+        {!files && <p className="meta">Make the print file first.</p>}
+        {current?.quote && (
+          <div className="summary">
+            <span>Printing {counted(quantity, 'copy', 'copies')}</span><span>{cents(current.quote.productCents, current.quote.currency)}</span>
+            <span>Shipping{current.quote.method ? ` · ${current.quote.method}` : ''}{current.quote.days ? `, ${current.quote.days} days` : ''}</span><span>{cents(current.quote.shippingCents, current.quote.currency)}</span>
+            <span className="total">Printer's total</span><span className="total">{cents(current.quote.productCents + current.quote.shippingCents, current.quote.currency)}</span>
+          </div>
+        )}
+        {current?.quote && current.status === 'requested' && (
+          <button className="primary" disabled={!!busy || stale} onClick={place} style={{ justifySelf: 'start' }}>
+            {busy ?? 'Send to the printer as a draft'}
+          </button>
+        )}
+        {current?.status === 'draft' && (
+          <p className="lede">Gelato has it as a draft order{current.gelatoOrderID ? ` (${current.gelatoOrderID})` : ''}. Nothing is printed or charged until it's confirmed there.</p>
         )}
         {orders.length > 0 && (
           <ul className="problems">
