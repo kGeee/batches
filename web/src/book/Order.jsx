@@ -10,13 +10,13 @@ export function OrderView({ bag }) {
   const { id, doc, photos, batches, me, format, save, revision, setFocus } = bag
   const check = useMemo(() => preflight(doc, photos), [doc, photos])
   const [quantity, setQuantity] = useState(1)
-  const [files, setFiles] = useState(null)        // { revision, interior, cover, interiorURL, coverURL }
+  const [files, setFiles] = useState(null)        // { revision, path, url, pages, size, estimated }
   const [progress, setProgress] = useState(null)  // { done, total, step }
   const [problem, setProblem] = useState('')
   const [orders, setOrders] = useState([])
   const [ordered, setOrdered] = useState(false)
   useEffect(() => { api.ordersOf(id).then(setOrders).catch(() => {}) }, [id, ordered])
-  useEffect(() => () => { if (files) { URL.revokeObjectURL(files.interiorURL); URL.revokeObjectURL(files.coverURL) } }, [files])
+  useEffect(() => () => { if (files) URL.revokeObjectURL(files.url) }, [files])
 
   const stale = files && (files.revision !== revision.current || save !== 'saved')
   const each = priceCents(format, doc.pages.length)
@@ -26,18 +26,15 @@ export function OrderView({ bag }) {
     setProblem('')
     const snapshot = doc, rev = revision.current
     try {
-      setProgress({ done: 0, total: snapshot.pages.length, step: 'pages' })
-      const { coverPDF, interiorPDF } = await import('./print.js')
-      const data = { photos, batches, me }
-      const interior = await interiorPDF(snapshot, data, (done, total) => setProgress({ done, total, step: 'pages' }))
       setProgress({ done: 0, total: 1, step: 'cover' })
-      const cover = await coverPDF(snapshot, data)
+      const [{ bookPDF }, printer] = await Promise.all([import('./print.js'), api.coverDimensions(snapshot.pages.length)])
+      const { blob, sheet } = await bookPDF(snapshot, { photos, batches, me }, {
+        printer, onProgress: (step, done, total) => setProgress({ step, done, total }),
+      })
       setProgress({ done: 0, total: 1, step: 'upload' })
-      const base = `${me}/${id}/${rev}`
-      await api.uploadPrint(`${base}/interior.pdf`, interior)
-      await api.uploadPrint(`${base}/cover.pdf`, cover)
-      setFiles({ revision: rev, interior: `${base}/interior.pdf`, cover: `${base}/cover.pdf`, pages: snapshot.pages.length,
-        interiorURL: URL.createObjectURL(interior), coverURL: URL.createObjectURL(cover), size: interior.size + cover.size })
+      const path = `${me}/${id}/${rev}/book.pdf`
+      await api.uploadPrint(path, blob)
+      setFiles({ revision: rev, path, pages: snapshot.pages.length, url: URL.createObjectURL(blob), size: blob.size, estimated: sheet.estimate })
     } catch (e) {
       setProblem(e.message ?? String(e))
     } finally { setProgress(null) }
@@ -46,7 +43,7 @@ export function OrderView({ bag }) {
   const order = async () => {
     setProblem('')
     try {
-      await api.orderBook({ bookID: id, revision: files.revision, quantity, interiorPath: files.interior, coverPath: files.cover, pageCount: files.pages })
+      await api.orderBook({ bookID: id, revision: files.revision, quantity, printPath: files.path, pageCount: files.pages })
       setOrdered(true)
     } catch (e) { setProblem(e.message) }
   }
@@ -87,8 +84,8 @@ export function OrderView({ bag }) {
       </section>
 
       <section className="card stacked">
-        <h2 className="title">Print files</h2>
-        <p className="meta">Every page drawn at 300 dpi from the largest copies shared with you, with an eighth of an inch of bleed.</p>
+        <h2 className="title">Print file</h2>
+        <p className="meta">One PDF for the printer: the cover, then every page drawn at 300 dpi from the largest copies shared with you, with 3 mm of bleed.</p>
         {progress && (
           <>
             <div className="progress"><span style={{ width: `${(progress.done / progress.total) * 100}%` }} /></div>
@@ -97,18 +94,18 @@ export function OrderView({ bag }) {
         )}
         {!progress && (!files || stale) && (
           <button className="primary" disabled={check.blocked || save !== 'saved'} onClick={make} style={{ justifySelf: 'start' }}>
-            {stale ? 'Make them again' : 'Make print files'}
+            {stale ? 'Make it again' : 'Make print file'}
           </button>
         )}
         {check.blocked && <p className="meta">Fix the checks marked red first.</p>}
         {save !== 'saved' && !check.blocked && <p className="meta">Waiting for your changes to save…</p>}
         {files && !progress && (
           <div className="filelinks">
-            <a className="button secondary small" href={files.interiorURL} download={`${doc.title} - pages.pdf`}>Pages PDF</a>
-            <a className="button secondary small" href={files.coverURL} download={`${doc.title} - cover.pdf`}>Cover PDF</a>
+            <a className="button secondary small" href={files.url} download={`${doc.title}.pdf`}>Book PDF</a>
             <span className="meta" style={{ alignSelf: 'center' }}>{(files.size / 1048576).toFixed(1)} MB{stale ? ' · out of date, the book has changed' : ''}</span>
           </div>
         )}
+        {files && !progress && files.estimated && <p className="meta">The cover is sized from an estimate until printing is connected, so its spine and wrap may change.</p>}
         {problem && <p className="problem">{problem}</p>}
       </section>
 
@@ -118,7 +115,7 @@ export function OrderView({ bag }) {
           <p className="lede">Requested. Paying and shipping details come next; we'll email you when your copy is ready to pay for.</p>
         ) : (
           <>
-            <p className="meta">Printing isn't open to everyone yet. Requesting saves these exact files with your order.</p>
+            <p className="meta">Printing isn't open to everyone yet. Requesting saves this exact file with your order.</p>
             <button className="primary" disabled={!files || stale || !!progress} onClick={order} style={{ justifySelf: 'start' }}>
               Request {counted(quantity, 'copy', 'copies')} · {money(each * quantity + format.shippingCents)}
             </button>

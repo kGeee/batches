@@ -466,10 +466,22 @@ export async function printLink(path) {
   return check(await supabase.storage.from('prints').createSignedUrl(path, 3600)).signedUrl
 }
 
-export async function orderBook({ bookID, revision, quantity, interiorPath, coverPath, pageCount }) {
+/**
+ * Gelato's cover measurements (millimetres) for a book with this many pages, from the print-cover
+ * function, or null when printing isn't set up yet and the cover has to be estimated.
+ */
+export async function coverDimensions(pages) {
+  try {
+    const { data, error } = await supabase.functions.invoke('print-cover', { body: { pages } })
+    return error ? null : data?.dimensions ?? null
+  } catch { return null }
+}
+
+/** `printPath` is the one PDF Gelato prints from: cover sheet, endpaper, pages, last page. */
+export async function orderBook({ bookID, revision, quantity, printPath, pageCount }) {
   const id = crypto.randomUUID()
   check(await supabase.from('book_orders').insert({
-    id, book_id: bookID, book_revision: revision, quantity, interior_path: interiorPath, cover_path: coverPath, page_count: pageCount,
+    id, book_id: bookID, book_revision: revision, quantity, print_path: printPath, page_count: pageCount,
   }))
   return id
 }

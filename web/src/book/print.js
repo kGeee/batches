@@ -1,10 +1,11 @@
-// Print files, made in the browser: each page is drawn onto a canvas at 300 dpi with the same
-// geometry render.jsx uses on screen, then pages become a PDF with trim and bleed boxes. Drawing
-// to pixels means the printer needs none of our fonts.
-import { PDFDocument } from 'pdf-lib'
+// The print file, made in the browser: each page is drawn onto a canvas at 300 dpi with the same
+// geometry render.jsx uses on screen, then everything becomes one PDF with trim and bleed boxes,
+// laid out the way Gelato takes a photo book: the cover sheet, a blank endpaper, the pages, and a
+// blank last page. Drawing to pixels means the printer needs none of our fonts.
+import { PDFDocument, rgb } from 'pdf-lib'
 import { displayURL, pathFor } from '../photos.js'
 import { captionFamily, fontFamily } from '../look.js'
-import { aspectOf, coverLayout, coverPhotoBox, formatOf, framePadding, lineHeight, printBox, spineInches } from './format.js'
+import { aspectOf, coverLayout, coverPhotoBox, coverSheet, formatOf, framePadding, lineHeight, printBox } from './format.js'
 import { backgroundColor, chapterOf, cloths, isDark, photoCredit, spillInto, textColor } from './doc.js'
 
 export const dpi = 300
@@ -124,40 +125,47 @@ export async function drawPage(canvas, doc, index, { photos, batches, me }, load
   })
 }
 
-/** The cover as one flat sheet: back, spine and front, with bleed all round. */
-export async function drawCover(canvas, doc, { photos }, load) {
-  const format = formatOf(doc)
-  const U = format.trimInches * dpi
-  const off = format.bleedInches * dpi
-  const spine = spineInches(doc.pages.length) * dpi
+/**
+ * The cover as one flat sheet: back, spine and front where `sheet` (from coverSheet, in inches)
+ * puts them. Cloth runs across the whole sheet, wrap and hinges included, so nothing white shows
+ * where it folds round the boards.
+ */
+export async function drawCover(canvas, doc, { photos }, load, sheet) {
+  const px = (inches) => inches * dpi
   const cloth = cloths[doc.cover.cloth] ?? cloths.oat
   const ctx = canvas.getContext('2d')
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.fillStyle = cloth.color
   ctx.fillRect(0, 0, canvas.width, canvas.height)
-  weave(ctx, 0, 0, canvas.width, canvas.height, U, 'rgba(0, 0, 0, .035)')
+  weave(ctx, 0, 0, canvas.width, canvas.height, px(sheet.front.w), 'rgba(0, 0, 0, .035)')
   ctx.fillStyle = cloth.ink
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
+  // Positions on the back and front are in units of that side's width, centred top to bottom.
+  const side = (r) => ({ U: px(r.w), x: px(r.x), y: px(r.y) + (px(r.h) - px(r.w)) / 2 })
+
   // Back
+  const back = side(sheet.back)
   ctx.save()
   ctx.globalAlpha = 0.7
-  ctx.font = `${0.018 * U}px ${mono}`
-  if ('letterSpacing' in ctx) ctx.letterSpacing = `${0.003 * U}px`
-  ctx.fillText('MADE WITH BATCHES', off + U / 2, off + 0.92 * U)
+  ctx.font = `${0.018 * back.U}px ${mono}`
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${0.003 * back.U}px`
+  ctx.fillText('MADE WITH BATCHES', back.x + back.U / 2, back.y + 0.92 * back.U)
   ctx.restore()
 
   // Spine, read top to bottom
+  const front = side(sheet.front)
+  const spineW = px(sheet.spine.w), spineH = px(sheet.spine.h)
   ctx.save()
-  ctx.translate(off + U + spine / 2, off + U / 2)
+  ctx.translate(px(sheet.spine.x) + spineW / 2, px(sheet.spine.y) + spineH / 2)
   ctx.rotate(Math.PI / 2)
-  ctx.font = `${Math.min(spine * 0.42, 0.03 * U)}px ${family(doc.cover.font)}`
-  ctx.fillText(doc.cover.title || doc.title, 0, 0, U * 0.8)
+  ctx.font = `${Math.min(spineW * 0.42, 0.03 * front.U)}px ${family(doc.cover.font)}`
+  ctx.fillText(doc.cover.title || doc.title, 0, 0, spineH * 0.8)
   ctx.restore()
 
   // Front
-  const fx = off + U + spine, fy = off
+  const { U, x: fx, y: fy } = front
   const photo = photos[doc.cover.photo]
   const img = await load(photo)
   const box = coverPhotoBox(photo ? aspectOf(photo) : 1)
@@ -165,8 +173,8 @@ export async function drawCover(canvas, doc, { photos }, load) {
   ctx.shadowColor = 'rgba(0, 0, 0, .3)'
   ctx.shadowBlur = 0.01 * U
   ctx.shadowOffsetY = 0.003 * U
-  const px = fx + (box.x - box.w / 2) * U, py = fy + (box.y - box.h / 2) * U
-  if (img) ctx.drawImage(img, px, py, box.w * U, box.h * U)
+  const photoX = fx + (box.x - box.w / 2) * U, photoY = fy + (box.y - box.h / 2) * U
+  if (img) ctx.drawImage(img, photoX, photoY, box.w * U, box.h * U)
   ctx.restore()
   ctx.font = `${coverLayout.titleSize * U}px ${family(doc.cover.font)}`
   ctx.fillText(doc.cover.title || doc.title, fx + U / 2, fy + coverLayout.titleY * U, U * 0.88)
@@ -192,50 +200,56 @@ async function encode(canvas, budget) {
 
 const pts = (inches) => inches * 72
 
-/** The inside pages as one PDF. `onProgress(done, total)` after each page. */
-export async function interiorPDF(doc, data, onProgress = () => {}) {
+/**
+ * The whole book as one PDF, in the order Gelato asks for: page 1 is the cover sheet (back, spine
+ * and front), page 2 a blank endpaper, then every page of the book, then a blank last page. So a
+ * 30-page book is a 33-page file. `printer` is Gelato's cover measurements for this page count;
+ * without them the cover is sized from an estimate. `onProgress(step, done, total)` as it goes.
+ */
+export async function bookPDF(doc, data, { printer = null, onProgress = () => {} } = {}) {
   const format = formatOf(doc)
   const load = loader()
-  const side = Math.round((format.trimInches + 2 * format.bleedInches) * dpi)
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = side
   if (document.fonts?.ready) await document.fonts.ready
   const pdf = await PDFDocument.create()
   pdf.setTitle(doc.title)
   pdf.setCreator('Batches')
+  // The cover sheet is about two and a half pages of pixels; budget it as three.
+  const budget = fileBudget / (doc.pages.length + 3)
+
+  onProgress('cover', 0, 1)
+  const sheet = coverSheet(format, doc.pages.length, printer)
+  const coverCanvas = document.createElement('canvas')
+  coverCanvas.width = Math.round(sheet.w * dpi)
+  coverCanvas.height = Math.round(sheet.h * dpi)
+  await drawCover(coverCanvas, doc, data, load, sheet)
+  const coverImage = await pdf.embedJpg(await encode(coverCanvas, budget * 3))
+  const cover = pdf.addPage([pts(sheet.w), pts(sheet.h)])
+  cover.drawImage(coverImage, { x: 0, y: 0, width: pts(sheet.w), height: pts(sheet.h) })
+  // The whole sheet is printed and wrapped; the printer's template already counts its edges.
+  cover.setBleedBox(0, 0, pts(sheet.w), pts(sheet.h))
+  cover.setTrimBox(0, 0, pts(sheet.w), pts(sheet.h))
+  onProgress('cover', 1, 1)
+
   const size = pts(format.trimInches + 2 * format.bleedInches)
   const b = pts(format.bleedInches), trim = pts(format.trimInches)
-  const budget = fileBudget / doc.pages.length
-  for (let i = 0; i < doc.pages.length; i++) {
-    await drawPage(canvas, doc, i, data, load)
-    const image = await pdf.embedJpg(await encode(canvas, budget))
+  const inside = (image) => {
     const page = pdf.addPage([size, size])
-    page.drawImage(image, { x: 0, y: 0, width: size, height: size })
+    if (image) page.drawImage(image, { x: 0, y: 0, width: size, height: size })
+    else page.drawRectangle({ x: 0, y: 0, width: size, height: size, color: rgb(1, 1, 1) })
     page.setBleedBox(0, 0, size, size)
     page.setTrimBox(b, b, trim, trim)
-    onProgress(i + 1, doc.pages.length)
   }
-  return new Blob([await pdf.save()], { type: 'application/pdf' })
-}
 
-export async function coverPDF(doc, data) {
-  const format = formatOf(doc)
-  const load = loader()
-  const spine = spineInches(doc.pages.length)
-  const wIn = 2 * format.trimInches + spine + 2 * format.bleedInches
-  const hIn = format.trimInches + 2 * format.bleedInches
+  inside(null) // endpaper
+  const side = Math.round((format.trimInches + 2 * format.bleedInches) * dpi)
   const canvas = document.createElement('canvas')
-  canvas.width = Math.round(wIn * dpi)
-  canvas.height = Math.round(hIn * dpi)
-  if (document.fonts?.ready) await document.fonts.ready
-  await drawCover(canvas, doc, data, load)
-  const pdf = await PDFDocument.create()
-  pdf.setTitle(`${doc.title}: cover`)
-  pdf.setCreator('Batches')
-  const image = await pdf.embedJpg(await encode(canvas, fileBudget))
-  const page = pdf.addPage([pts(wIn), pts(hIn)])
-  page.drawImage(image, { x: 0, y: 0, width: pts(wIn), height: pts(hIn) })
-  page.setBleedBox(0, 0, pts(wIn), pts(hIn))
-  page.setTrimBox(pts(format.bleedInches), pts(format.bleedInches), pts(wIn - 2 * format.bleedInches), pts(format.trimInches))
-  return new Blob([await pdf.save()], { type: 'application/pdf' })
+  canvas.width = canvas.height = side
+  for (let i = 0; i < doc.pages.length; i++) {
+    await drawPage(canvas, doc, i, data, load)
+    inside(await pdf.embedJpg(await encode(canvas, budget)))
+    onProgress('pages', i + 1, doc.pages.length)
+  }
+  inside(null) // last page, against the inside of the back cover
+
+  return { blob: new Blob([await pdf.save()], { type: 'application/pdf' }), sheet }
 }

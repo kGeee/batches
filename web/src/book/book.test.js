@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aspectOf, effectiveDPI, evenPages, formats, printAspect, printBox, spreadsOf, spreadIndexOf, isLeftPage, priceCents, safeMargin } from './format.js'
+import { aspectOf, coverSheet, effectiveDPI, evenPages, formats, sheetFromPrinter, printAspect, printBox, spreadsOf, spreadIndexOf, isLeftPage, priceCents, safeMargin } from './format.js'
 import { compositions, groupPhotos, rows, snapAxis, templatesFor, contentBox, wrapTitle } from './layout.js'
 import { addPhoto, addSpread, cleanDoc, createDoc, creditLine, layoutChoices, applyLayout, moveChapter, moveSpread, removeItem, removeSpread, renameChapter, swapPhoto, usedPhotoIDs, chapterPageIndices, setBackground, relayoutChapter } from './doc.js'
 import { preflight } from './preflight.js'
@@ -16,13 +16,45 @@ const byID = (...bs) => Object.fromEntries(bs.flatMap((b) => b.photos).map((p) =
 
 describe('format', () => {
   it('rounds pages to even and the minimum', () => {
-    expect(evenPages(3, f)).toBe(20)
+    expect(evenPages(3, f)).toBe(30)
     expect(evenPages(31, f)).toBe(32)
     expect(evenPages(500, f)).toBe(120)
   })
   it('prices extra pages', () => {
-    expect(priceCents(f, 20)).toBe(3900)
-    expect(priceCents(f, 30)).toBe(4900)
+    expect(priceCents(f, 30)).toBe(3900)
+    expect(priceCents(f, 40)).toBe(4900)
+  })
+  it('bleeds 3 mm past the trim, as Gelato asks', () => {
+    expect(f.bleedInches * 25.4).toBeCloseTo(3, 6)
+  })
+  it('reads Gelato\'s cover measurements as the cover sheet', () => {
+    // Gelato's documented hardcover example, in mm.
+    const gelato = {
+      measureUnit: 'mm',
+      wraparoundInsideSize: { width: 468, height: 325, left: 0, top: 0, thickness: 17 },
+      wraparoundEdgeSize: { width: 434, height: 291, left: 17, top: 17, thickness: 3 },
+      contentBackSize: { width: 203, height: 285, left: 20, top: 20 },
+      jointBackSize: { width: 8, height: 285, left: 223, top: 20 },
+      spineSize: { width: 6, height: 285, left: 231, top: 20 },
+      jointFrontSize: { width: 8, height: 285, left: 237, top: 20 },
+      contentFrontSize: { width: 203, height: 285, left: 245, top: 20 },
+    }
+    const sheet = coverSheet(f, 30, gelato)
+    expect(sheet.estimate).toBe(false)
+    expect(sheet.w * 25.4).toBeCloseTo(468, 6)
+    expect(sheet.h * 25.4).toBeCloseTo(325, 6)
+    expect(sheet.front.x * 25.4).toBeCloseTo(245, 6)
+    expect(sheet.spine.w * 25.4).toBeCloseTo(6, 6)
+    expect(sheetFromPrinter({ ...gelato, measureUnit: 'in' })).toBeNull()
+    expect(sheetFromPrinter({ measureUnit: 'mm' })).toBeNull()
+  })
+  it('estimates a hardcover sheet when the printer hasn\'t answered', () => {
+    const sheet = coverSheet(f, 30, null)
+    expect(sheet.estimate).toBe(true)
+    expect(sheet.back.x).toBeCloseTo(20 / 25.4, 6)
+    expect(sheet.front.x - (sheet.spine.x + sheet.spine.w)).toBeCloseTo(8 / 25.4, 6)
+    expect(sheet.w).toBeCloseTo(sheet.front.x + sheet.front.w + 20 / 25.4, 6)
+    expect(coverSheet(f, 60).spine.w).toBeGreaterThan(sheet.spine.w)
   })
   it('pairs pages into spreads with page 1 on the right', () => {
     const pages = [1, 2, 3, 4, 5, 6]
@@ -103,7 +135,7 @@ describe('doc', () => {
     const used = usedPhotoIDs(doc)
     expect(used.size).toBe(14)
     expect(doc.pages.length % 2).toBe(0)
-    expect(doc.pages.length).toBeGreaterThanOrEqual(20)
+    expect(doc.pages.length).toBeGreaterThanOrEqual(30)
     expect(doc.chapters).toHaveLength(2)
     expect(doc.chapters[0].background).toBe('kraft')
     expect(doc.chapters[0].frame).toBe('polaroid')
@@ -135,7 +167,7 @@ describe('doc', () => {
     const doc = createDoc({ batches: [batch(6)], title: 'Trip', me: 'me' })
     expect(cleanDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc)
     const junk = cleanDoc({ pages: [{ items: [{ kind: 'photo' }, { kind: 'text', text: 3 }, { kind: 'photo', photo: 'x', w: 99 }] }] })
-    expect(junk.pages).toHaveLength(20)
+    expect(junk.pages).toHaveLength(30)
     expect(junk.pages[0].items).toHaveLength(2)
     expect(junk.pages[0].items[1].w).toBe(2)
   })
@@ -184,11 +216,11 @@ describe('doc', () => {
   })
   it('adds and removes spreads, never below the minimum', () => {
     let doc = createDoc({ batches: [batch(2)], title: 'T', me: 'me' })
-    expect(removeSpread(doc, 3, f).pages).toHaveLength(20)
+    expect(removeSpread(doc, 3, f).pages).toHaveLength(30)
     doc = addSpread(doc, 2, f)
-    expect(doc.pages).toHaveLength(22)
+    expect(doc.pages).toHaveLength(32)
     expect(doc.pages[3].items).toHaveLength(0)
-    expect(removeSpread(doc, 2, f).pages).toHaveLength(20)
+    expect(removeSpread(doc, 2, f).pages).toHaveLength(30)
   })
   it('renames a chapter on its opener and relays it out', () => {
     const a = batch(5)
