@@ -9,7 +9,9 @@ export const formats = {
     id: 'square8',
     title: 'Square',
     detail: '8 × 8 in hardcover',
-    trimInches: 8,
+    // Gelato's "8x8" book is 200 mm square, a little under 8 in; pages are made at exactly that
+    // size so nothing is scaled or cropped at print.
+    trimInches: 200 / 25.4,
     // Gelato asks for 3 mm past the trim on every side of a photo book page and anything important
     // at least 4 mm inside it; we keep it 3/8 in inside.
     bleedInches: 3 / 25.4,

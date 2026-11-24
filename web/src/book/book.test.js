@@ -73,9 +73,9 @@ describe('format', () => {
     expect(printAspect(1.5, 'none')).toBeCloseTo(1.5)
   })
   it('computes print resolution from the largest shared copy', () => {
-    // A 4000 px wide photo is shared at 1800 px; across a whole 8 in page that's 225 dpi.
-    expect(effectiveDPI(photo(4000, 3000), 1, f)).toBeCloseTo(225)
-    expect(effectiveDPI(photo(1200, 900), 0.5, f)).toBeCloseTo(300)
+    // A 4000 px wide photo is shared at 1800 px; across a whole 200 mm page that's about 229 dpi.
+    expect(effectiveDPI(photo(4000, 3000), 1, f)).toBeCloseTo(1800 / (200 / 25.4))
+    expect(effectiveDPI(photo(1200, 900), 0.5, f)).toBeCloseTo(1200 / (100 / 25.4))
   })
 })
 
