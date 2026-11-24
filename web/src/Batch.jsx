@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import * as api from './api.js'
 import { backdrop, boardLayout, cover, fontFamily, insets, showsBoard } from './look.js'
 import { AddPhotosSheet, BatchLookSheet, ShareBatchSheet } from './UploadSheet.jsx'
@@ -6,6 +6,9 @@ import {
   Avatar, Framed, Icon, Link, MentionText, Menu, Photo, Sheet, Spinner, Toast,
   appURL, back, batchURL, counted, go, longDate, relative,
 } from './ui.jsx'
+
+// Drawing print files needs pdf-lib, so the postcard sheet loads only when someone opens it.
+const PostcardSheet = lazy(() => import('./postcard/PostcardSheet.jsx'))
 
 const visibilityLabels = { private: 'Only me', people: 'Shared', followers: 'Followers', public: 'Public' }
 const visibilityIcons = { private: 'lock', people: 'users', followers: 'users', public: 'globe' }
@@ -23,6 +26,7 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
   const [canAdd, setCanAdd] = useState(false)
   const [tagging, setTagging] = useState(null)
   const [reporting, setReporting] = useState(null)
+  const [postcarding, setPostcarding] = useState(null)
   const [addingOpen, setAddingOpen] = useState(false)
   const [sharingOpen, setSharingOpen] = useState(false)
   const [lookOpen, setLookOpen] = useState(false)
@@ -217,6 +221,7 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
                 onClose={closeViewer} onStep={(p) => go(batchURL(batch.id, p.id), { replace: true, state: { viewer: true, keepScroll: true } })}
                 onLike={() => like(viewing)} onCopy={() => copyLink(viewing)}
                 onTag={() => setTagging(viewing)}
+                onPostcard={me && viewing.share_path ? () => setPostcarding(viewing) : null}
                 onMakeCover={isOwner && viewing.id !== cover(batch)?.id ? () => makeCover(viewing) : null}
                 onRemove={canRemovePhoto(viewing) ? () => setConfirmRemovePhoto(viewing) : null}
                 onCommentCount={(n) => setCommentCount(viewing.id, n)}
@@ -291,6 +296,11 @@ export default function BatchPage({ id, photoID, ctx, signInInstead = null }) {
                    onChange={(next) => setPhotoTags(tagging.id, next)} />
       )}
       {reporting && <ReportSheet target={reporting} onClose={() => setReporting(null)} onSent={() => { setReporting(null); setToast('Thanks. We look at every report within a day.') }} />}
+      {postcarding && me && (
+        <Suspense fallback={null}>
+          <PostcardSheet photo={postcarding} me={me} onClose={() => setPostcarding(null)} />
+        </Suspense>
+      )}
       {toast && <Toast text={toast} onDone={() => setToast(null)} />}
     </div>
   )
@@ -529,7 +539,7 @@ function Board({ batch, onOpen }) {
 // The full-frame viewer --------------------------------------------------------------------------
 
 /** Just the photo you opened, as large as it fits and never cropped, with its likes, comments and tags. */
-function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep, onLike, onCopy, onTag, onMakeCover, onRemove, onReport, onReportComment, onCommentCount }) {
+function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep, onLike, onCopy, onTag, onPostcard, onMakeCover, onRemove, onReport, onReportComment, onCommentCount }) {
   const [commentsOpen, setCommentsOpen] = useState(() => window.matchMedia('(min-width: 960px)').matches)
   const [showPins, setShowPins] = useState(true)
   const [wide, setWide] = useState(() => window.matchMedia('(min-width: 960px)').matches)
@@ -567,6 +577,7 @@ function Viewer({ batch, photo, me, isOwner, canTag, reactions, onClose, onStep,
             canTag && { label: 'Tag people', icon: 'tag', onClick: onTag },
             onMakeCover && { label: 'Make cover', icon: 'star', onClick: onMakeCover },
             { label: 'Copy link to photo', icon: 'link', onClick: onCopy },
+            onPostcard && { label: 'Send as postcard', icon: 'send', onClick: onPostcard },
             onRemove && { label: 'Remove from batch', icon: 'trash', destructive: true, onClick: onRemove },
             onReport && { label: 'Report photo', icon: 'flag', onClick: onReport },
           ]} />
