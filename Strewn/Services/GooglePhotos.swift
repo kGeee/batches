@@ -65,6 +65,8 @@ final class GooglePhotos: NSObject {
     }
 
     private var token: (value: String, expires: Date)?
+    /// Every request to Google goes through this; tests swap in a stubbed session.
+    var urlSession: URLSession = .shared
     private var webSession: ASWebAuthenticationSession?
 
     /// Forgets the access token. Called on sign-out.
@@ -164,7 +166,7 @@ final class GooglePhotos: NSObject {
             .init(name: "code_verifier", value: verifier),
         ]
         exchange.httpBody = form.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B").data(using: .utf8)
-        let (data, response) = try await URLSession.shared.data(for: exchange)
+        let (data, response) = try await urlSession.data(for: exchange)
         struct TokenResponse: Decodable { let access_token: String?; let expires_in: Int?; let error_description: String?; let error: String? }
         let decoded = try? JSONDecoder().decode(TokenResponse.self, from: data)
         guard (response as? HTTPURLResponse)?.statusCode == 200, let value = decoded?.access_token else {
@@ -199,7 +201,7 @@ final class GooglePhotos: NSObject {
 
     // MARK: - Picker
 
-    private struct PickerSession: Decodable {
+    struct PickerSession: Decodable {
         let id: String
         let pickerUri: String
         let mediaItemsSet: Bool?
@@ -207,7 +209,7 @@ final class GooglePhotos: NSObject {
         struct PollingConfig: Decodable { let pollInterval: String?; let timeoutIn: String? }
     }
 
-    private struct PickedItem: Decodable {
+    struct PickedItem: Decodable {
         let id: String
         let createTime: String?
         let type: String?
@@ -289,7 +291,7 @@ final class GooglePhotos: NSObject {
         }
     }
 
-    private func pickedItems(sessionID: String, token: String) async throws -> [PickedItem] {
+    func pickedItems(sessionID: String, token: String) async throws -> [PickedItem] {
         struct Page: Decodable { let mediaItems: [PickedItem]?; let nextPageToken: String? }
         var items: [PickedItem] = []
         var pageToken: String?
@@ -305,12 +307,19 @@ final class GooglePhotos: NSObject {
         return items
     }
 
-    private func download(_ item: PickedItem, into dir: URL, token: String) async throws -> URL {
+    func download(_ item: PickedItem, into dir: URL, token: String) async throws -> URL {
         for suffix in ["=w4096-h4096", "=d"] {
             guard let url = URL(string: item.mediaFile.baseUrl + suffix) else { continue }
             var req = URLRequest(url: url)
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            guard let reply = try? await URLSession.shared.data(for: req) else { continue }
+            let reply: (Data, URLResponse)
+            do {
+                reply = try await urlSession.data(for: req)
+            } catch {
+                // A cancel is a cancel, not a failed download to retry with the next size.
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                continue
+            }
             let (data, response) = reply
             guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { continue }
             let mime = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? item.mediaFile.mimeType ?? "image/jpeg"
@@ -324,7 +333,7 @@ final class GooglePhotos: NSObject {
 
     /// A downloaded pick as a Photo. Google's resized copies usually drop EXIF, so the capture
     /// date and camera settings come from the picker's metadata when the file has none.
-    private func makePhoto(_ item: PickedItem, url: URL, collectionID: UUID, sortIndex: Int) -> Photo {
+    func makePhoto(_ item: PickedItem, url: URL, collectionID: UUID, sortIndex: Int) -> Photo {
         let info = PhotoImport.metadata(of: url, fallbackAsset: nil)
         let created = item.createTime.flatMap { string in
             (try? Date(string, strategy: .iso8601)) ?? ISO8601DateFormatter.withFractions.date(from: string)
@@ -344,7 +353,7 @@ final class GooglePhotos: NSObject {
 
     // MARK: - REST
 
-    private func request<T: Decodable>(_ url: String, token: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
+    func request<T: Decodable>(_ url: String, token: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
         let data = try await send(url, token: token, method: method, body: body)
         do {
             return try JSONDecoder().decode(T.self, from: data)
@@ -355,7 +364,7 @@ final class GooglePhotos: NSObject {
     }
 
     @discardableResult
-    private func send(_ url: String, token: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+    func send(_ url: String, token: String, method: String, body: [String: Any]? = nil) async throws -> Data {
         var req = URLRequest(url: URL(string: url)!)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -363,7 +372,7 @@ final class GooglePhotos: NSObject {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await urlSession.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
             self.token = nil

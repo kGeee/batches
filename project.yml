@@ -26,7 +26,8 @@ targets:
     type: application
     platform: iOS
     # A shared scheme, so a regenerate doesn't leave xcodebuild archive without one.
-    scheme: {}
+    scheme:
+      testTargets: [BatchesTests]
     sources: [Strewn]
     resources:
       - path: Strewn/Resources/Looks
@@ -58,6 +59,22 @@ targets:
     configFiles:
       Debug: Strewn/Resources/Config.xcconfig
       Release: Strewn/Resources/Config.xcconfig
+
+  # Unit tests, hosted in the app: xcodebuild test -scheme Batches -destination 'platform=iOS Simulator,name=iPhone 16'
+  BatchesTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests/BatchesTests]
+    dependencies:
+      - target: Batches
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.kevingeorge.strewn.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Batches.app/Batches"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        DEVELOPMENT_TEAM: 7CK43PG7GZ
 
   # "Edit with Batches" inside the Photos app. Shares the editor, recipe and color pipeline.
   BatchesPhotoEdit:

@@ -148,6 +148,12 @@ export function parseTimeoutMs(raw, fallbackMs = 20 * 60 * 1000) {
   return fallbackMs
 }
 
+// Google's JSON sends 64-bit integers as strings ("4032") and others as numbers; take either.
+function positiveNumber(value) {
+  const n = typeof value === 'string' && value.trim() ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null
+}
+
 /** Maps a PickedMediaItem's metadata to Batches' { capturedAt, exif } shape. */
 export function extractGoogleMediaMeta(item) {
   let capturedAt = null
@@ -157,18 +163,15 @@ export function extractGoogleMediaMeta(item) {
   }
   const pm = item?.mediaFile?.mediaFileMetadata?.photoMetadata
   const exif = {}
-  if (typeof pm?.apertureFNumber === 'number' && pm.apertureFNumber > 0) {
-    exif.aperture = Math.round(pm.apertureFNumber * 100) / 100
-  }
+  const aperture = positiveNumber(pm?.apertureFNumber)
+  if (aperture !== null) exif.aperture = Math.round(aperture * 100) / 100
   const exposureSec = parseDurationSeconds(pm?.exposureTime)
   const shutter = exposureSec !== null ? formatShutter(exposureSec) : null
   if (shutter) exif.shutter = shutter
-  if (typeof pm?.isoEquivalent === 'number' && pm.isoEquivalent > 0) {
-    exif.iso = Math.round(pm.isoEquivalent)
-  }
-  if (typeof pm?.focalLength === 'number' && pm.focalLength > 0) {
-    exif.focalLength = Math.round(pm.focalLength)
-  }
+  const iso = positiveNumber(pm?.isoEquivalent)
+  if (iso !== null) exif.iso = Math.round(iso)
+  const focal = positiveNumber(pm?.focalLength)
+  if (focal !== null) exif.focalLength = Math.round(focal)
   return {
     capturedAt,
     exif: Object.keys(exif).length ? exif : null,
