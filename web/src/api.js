@@ -503,6 +503,29 @@ export async function bookOrder(action, orderID) {
   throw error
 }
 
+/** A postcard of one photo: its two print files are already in your prints folder. */
+export async function requestPostcard({ id, photoID, message, address, frontPath, backPath }) {
+  check(await supabase.from('postcards').insert({
+    id, photo_id: photoID, message,
+    to_name: address.name, to_line1: address.line1, to_line2: address.line2 || null,
+    to_city: address.city, to_state: address.state, to_zip: address.zip,
+    front_path: frontPath, back_path: backPath,
+  }))
+  return id
+}
+
+/**
+ * Asks the server to hand a postcard to Lob. Answers what happened, `{ status, lobEnv, proofUrl,
+ * expectedDelivery, error }`, including when it couldn't be sent yet; throws only if it got no answer.
+ */
+export async function sendPostcard(postcardID) {
+  const { data, error } = await supabase.functions.invoke('postcard-send', { body: { postcardID } })
+  if (!error) return data
+  const said = await error.context?.json?.().catch(() => null)
+  if (said) return { ...said, httpStatus: error.context.status }
+  throw error
+}
+
 export async function ordersOf(bookID) {
   return check(await supabase.from('book_orders').select().eq('book_id', bookID).order('created_at', { ascending: false }))
 }
