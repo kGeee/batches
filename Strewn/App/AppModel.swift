@@ -777,10 +777,15 @@ final class AppModel {
         completeFirstBatchOnboarding(createdBatchID: id)
     }
 
-    func createPile(title: String, photos: [Photo], frame: FrameStyle) {
+    /// Photos Library ids of photos already in one of your batches, so suggestions skip them.
+    var batchedAssetIDs: Set<String> { Set(myCollections.flatMap(\.photos).compactMap(\.photosAssetID)) }
+
+    func createPile(title: String, place: String? = nil, photos: [Photo], frame: FrameStyle) {
         guard let me, let first = photos.first else { return }
         let id = first.collectionID
-        let pile = PhotoCollection(id: id, ownerID: me.id, title: title, place: nil, shotOn: photos.compactMap(\.capturedAt).min() ?? .now,
+        let cleanPlace = place?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pile = PhotoCollection(id: id, ownerID: me.id, title: title, place: (cleanPlace?.isEmpty == false) ? cleanPlace : nil,
+                                   shotOn: photos.compactMap(\.capturedAt).min() ?? .now,
                                    photos: photos, coverPhotoID: first.id, frame: frame)
         photos.forEach(local.remember)
         myCollections.insert(pile, at: 0)
