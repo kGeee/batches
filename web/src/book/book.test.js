@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aspectOf, coverSheet, effectiveDPI, evenPages, formats, sheetFromPrinter, printAspect, printBox, spreadsOf, spreadIndexOf, isLeftPage, priceCents, safeMargin } from './format.js'
+import { aspectOf, cleanShipping, coverSheet, effectiveDPI, evenPages, formats, sheetFromPrinter, printAspect, printBox, spreadsOf, spreadIndexOf, isLeftPage, priceCents, safeMargin } from './format.js'
 import { compositions, groupPhotos, rows, snapAxis, templatesFor, contentBox, wrapTitle } from './layout.js'
 import { addPhoto, addSpread, cleanDoc, createDoc, creditLine, layoutChoices, applyLayout, moveChapter, moveSpread, removeItem, removeSpread, renameChapter, swapPhoto, usedPhotoIDs, chapterPageIndices, setBackground, relayoutChapter } from './doc.js'
 import { preflight } from './preflight.js'
@@ -269,5 +269,21 @@ describe('history', () => {
     expect(h.present).toBe(4)
     h = push(h, 5, 'drag', 5000)
     expect(h.past).toEqual([1, 2, 4])
+  })
+})
+
+describe('shipping address', () => {
+  it('tidies a good one', () => {
+    const { ship, problem } = cleanShipping({ firstName: ' Ana ', lastName: 'Ruiz', line1: '1  Main St', city: 'Oakland', state: 'ca', zip: '94612' })
+    expect(problem).toBe(null)
+    expect(ship).toMatchObject({ firstName: 'Ana', line1: '1 Main St', state: 'CA', line2: '' })
+  })
+  it('keeps to the printer\'s limits', () => {
+    const good = { firstName: 'A', lastName: 'B', line1: '1 Main St', city: 'Oakland', state: 'CA', zip: '94612' }
+    expect(cleanShipping({ ...good, state: 'ZZ' }).problem).toMatch(/two-letter/)
+    expect(cleanShipping({ ...good, zip: '946' }).problem).toMatch(/ZIP/)
+    expect(cleanShipping({ ...good, firstName: 'x'.repeat(26) }).problem).toMatch(/25/)
+    expect(cleanShipping({ ...good, line1: 'x'.repeat(36) }).problem).toMatch(/35/)
+    expect(cleanShipping({ ...good, lastName: '' }).problem).toMatch(/name/)
   })
 })

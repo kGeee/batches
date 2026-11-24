@@ -177,3 +177,28 @@ export function spreadsOf(pages) {
 export const spreadIndexOf = (pageIndex) => (pageIndex === 0 ? 0 : Math.floor((pageIndex - 1) / 2) + 1)
 /** Page 1 and every odd page is on the right. */
 export const isLeftPage = (pageIndex) => pageIndex % 2 === 1
+
+const usStates = new Set(('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY ' +
+  'NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR').split(' '))
+
+/** A US shipping address tidied for the printer, and the first thing wrong with it, if any. */
+export function cleanShipping(a) {
+  const t = (s) => String(s ?? '').replace(/\s+/g, ' ').trim()
+  const ship = {
+    firstName: t(a.firstName), lastName: t(a.lastName), line1: t(a.line1), line2: t(a.line2),
+    city: t(a.city), state: t(a.state).toUpperCase(), zip: t(a.zip),
+  }
+  const problem =
+    !ship.firstName || !ship.lastName ? 'Add a first and last name.'
+    : !ship.line1 ? 'Add the street address.'
+    : !ship.city ? 'Add the city.'
+    : !usStates.has(ship.state) ? 'Use the two-letter state, like CA.'
+    : !/^\d{5}(-\d{4})?$/.test(ship.zip) ? 'Use a five-digit ZIP code.'
+    // The printer's limits.
+    : [ship.firstName, ship.lastName].some((s) => s.length > 25) ? 'Keep each name to 25 characters.'
+    : [ship.line1, ship.line2].some((s) => s.length > 35) ? 'Keep each address line to 35 characters.'
+    : ship.city.length > 30 ? 'Keep the city to 30 characters.'
+    : null
+  return { ship, problem }
+}
+

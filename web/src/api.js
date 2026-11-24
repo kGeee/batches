@@ -478,12 +478,29 @@ export async function coverDimensions(pages) {
 }
 
 /** `printPath` is the one PDF Gelato prints from: cover sheet, endpaper, pages, last page. */
-export async function orderBook({ bookID, revision, quantity, printPath, pageCount }) {
+export async function orderBook({ bookID, revision, quantity, printPath, pageCount, ship = null }) {
   const id = crypto.randomUUID()
   check(await supabase.from('book_orders').insert({
     id, book_id: bookID, book_revision: revision, quantity, print_path: printPath, page_count: pageCount,
+    ...(ship ? {
+      ship_first_name: ship.firstName, ship_last_name: ship.lastName, ship_line1: ship.line1, ship_line2: ship.line2 || null,
+      ship_city: ship.city, ship_state: ship.state, ship_zip: ship.zip,
+    } : {}),
   }))
   return id
+}
+
+/**
+ * Asks the server to price an order with Gelato (`action: 'quote'`) or send it there
+ * (`action: 'place'`). Answers the order as it now stands, with `error` when Gelato or the setup
+ * said no; throws only when there was no answer at all.
+ */
+export async function bookOrder(action, orderID) {
+  const { data, error } = await supabase.functions.invoke('book-order', { body: { action, orderID } })
+  if (!error) return data
+  const said = await error.context?.json?.().catch(() => null)
+  if (said) return { ...said, httpStatus: error.context.status }
+  throw error
 }
 
 export async function ordersOf(bookID) {

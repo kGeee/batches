@@ -2,9 +2,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as api from '../api.js'
 import { counted, go, longDate } from '../ui.jsx'
-import { money, priceCents } from './format.js'
+import { cleanShipping, money, priceCents } from './format.js'
 import { preflight } from './preflight.js'
-const statusTitle = { requested: 'Requested', paid: 'Paid', printing: 'Printing', shipped: 'Shipped', cancelled: 'Cancelled' }
+const statusTitle = { requested: 'Requested', draft: 'Draft at printer', paid: 'Paid', printing: 'Printing', shipped: 'Shipped', cancelled: 'Cancelled', failed: 'Refused by printer' }
+const blankShip = { firstName: '', lastName: '', line1: '', line2: '', city: '', state: '', zip: '' }
+const cents = (c, currency) => (currency && currency !== 'USD' ? `${(c / 100).toFixed(2)} ${currency}` : money(c))
 
 export function OrderView({ bag }) {
   const { id, doc, photos, batches, me, format, save, revision, setFocus } = bag
@@ -14,7 +16,10 @@ export function OrderView({ bag }) {
   const [progress, setProgress] = useState(null)  // { done, total, step }
   const [problem, setProblem] = useState('')
   const [orders, setOrders] = useState([])
-  const [ordered, setOrdered] = useState(false)
+  const [ordered, setOrdered] = useState(0)
+  const [ship, setShip] = useState(blankShip)
+  const [current, setCurrent] = useState(null)   // the order being priced or sent, as the server answered
+  const [busy, setBusy] = useState(null)
   useEffect(() => { api.ordersOf(id).then(setOrders).catch(() => {}) }, [id, ordered])
   useEffect(() => () => { if (files) URL.revokeObjectURL(files.url) }, [files])
 
@@ -40,12 +45,33 @@ export function OrderView({ bag }) {
     } finally { setProgress(null) }
   }
 
-  const order = async () => {
-    setProblem('')
+  const shipField = (key, label, props = {}) => (
+    <input aria-label={label} placeholder={label} value={ship[key]} disabled={!!busy} {...props}
+           onChange={(e) => { setShip((a) => ({ ...a, [key]: e.target.value })); setCurrent(null) }} />
+  )
+
+  // Saves the order with its address and file, then asks the printer what it costs to make and ship.
+  const quote = async () => {
+    const { ship: clean, problem: wrong } = cleanShipping(ship)
+    if (wrong) return setProblem(wrong)
+    setProblem(''); setBusy('Getting a price')
     try {
-      await api.orderBook({ bookID: id, revision: files.revision, quantity, printPath: files.path, pageCount: files.pages })
-      setOrdered(true)
-    } catch (e) { setProblem(e.message) }
+      const orderID = await api.orderBook({ bookID: id, revision: files.revision, quantity, printPath: files.path, pageCount: files.pages, ship: clean })
+      const answer = await api.bookOrder('quote', orderID)
+      setCurrent({ ...answer, id: answer.id ?? orderID })
+      if (answer.error) setProblem(answer.error)
+      setOrdered((n) => n + 1)
+    } catch (e) { setProblem(e.message) } finally { setBusy(null) }
+  }
+
+  const place = async () => {
+    setProblem(''); setBusy('Sending to the printer')
+    try {
+      const answer = await api.bookOrder('place', current.id)
+      setCurrent((c) => ({ ...c, ...answer }))
+      if (answer.error) setProblem(answer.error)
+      setOrdered((n) => n + 1)
+    } catch (e) { setProblem(e.message) } finally { setBusy(null) }
   }
 
   return (
@@ -111,15 +137,37 @@ export function OrderView({ bag }) {
 
       <section className="card stacked">
         <h2 className="title">Order</h2>
-        {ordered ? (
-          <p className="lede">Requested. Paying and shipping details come next; we'll email you when your copy is ready to pay for.</p>
-        ) : (
-          <>
-            <p className="meta">Printing isn't open to everyone yet. Requesting saves this exact file with your order.</p>
-            <button className="primary" disabled={!files || stale || !!progress} onClick={order} style={{ justifySelf: 'start' }}>
-              Request {counted(quantity, 'copy', 'copies')} · {money(each * quantity + format.shippingCents)}
-            </button>
-          </>
+        <p className="meta">Printed and bound by Gelato, shipped anywhere in the US. Printing isn't open to everyone yet: orders go to the printer as drafts, which it keeps but never prints or charges.</p>
+        <div className="shipping">
+          <div className="pair">{shipField('firstName', 'First name', { autoComplete: 'given-name' })}{shipField('lastName', 'Last name', { autoComplete: 'family-name' })}</div>
+          {shipField('line1', 'Street address', { autoComplete: 'address-line1' })}
+          {shipField('line2', 'Apartment, suite (optional)', { autoComplete: 'address-line2' })}
+          <div className="citystatezip">
+            {shipField('city', 'City', { autoComplete: 'address-level2' })}
+            {shipField('state', 'State', { autoComplete: 'address-level1', maxLength: 2 })}
+            {shipField('zip', 'ZIP', { autoComplete: 'postal-code', inputMode: 'numeric', maxLength: 10 })}
+          </div>
+        </div>
+        {!current?.quote && (
+          <button className="primary" disabled={!files || stale || !!progress || !!busy} onClick={quote} style={{ justifySelf: 'start' }}>
+            {busy ?? `Get the printer's price for ${counted(quantity, 'copy', 'copies')}`}
+          </button>
+        )}
+        {!files && <p className="meta">Make the print file first.</p>}
+        {current?.quote && (
+          <div className="summary">
+            <span>Printing {counted(quantity, 'copy', 'copies')}</span><span>{cents(current.quote.productCents, current.quote.currency)}</span>
+            <span>Shipping{current.quote.method ? ` · ${current.quote.method}` : ''}{current.quote.days ? `, ${current.quote.days} days` : ''}</span><span>{cents(current.quote.shippingCents, current.quote.currency)}</span>
+            <span className="total">Printer's total</span><span className="total">{cents(current.quote.productCents + current.quote.shippingCents, current.quote.currency)}</span>
+          </div>
+        )}
+        {current?.quote && current.status === 'requested' && (
+          <button className="primary" disabled={!!busy || stale} onClick={place} style={{ justifySelf: 'start' }}>
+            {busy ?? 'Send to the printer as a draft'}
+          </button>
+        )}
+        {current?.status === 'draft' && (
+          <p className="lede">Gelato has it as a draft order{current.gelatoOrderID ? ` (${current.gelatoOrderID})` : ''}. Nothing is printed or charged until it's confirmed there.</p>
         )}
         {orders.length > 0 && (
           <ul className="problems">

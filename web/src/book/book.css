@@ -228,3 +228,7 @@
 .qty { display: inline-flex; align-items: center; gap: 10px; }
 .qty b { min-width: 2ch; text-align: center; font-size: 18px; }
 .filelinks { display: flex; gap: 10px; flex-wrap: wrap; }
+.orderview .shipping { display: grid; gap: 8px; }
+.orderview .shipping input { margin: 0; }
+.orderview .shipping .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.orderview .shipping .citystatezip { display: grid; grid-template-columns: 1fr 64px 100px; gap: 8px; }

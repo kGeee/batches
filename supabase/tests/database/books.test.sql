@@ -4,7 +4,7 @@
 -- book from his followers batch, stranger (e) sees nothing.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(24);
+select plan(28);
 insert into auth.users (id) values ('00000000-0000-0000-0000-00000000000a'),('00000000-0000-0000-0000-00000000000b'),('00000000-0000-0000-0000-00000000000e');
 create function pg_temp.as_user(u text) returns void language sql as $$ select set_config('request.jwt.claim.sub', u, true) $$;
 -- What a statement did: 'ok', '0 rows' (filtered out by a policy) or 'refused' (blocked).
@@ -47,6 +47,11 @@ select is(pg_temp.try($$insert into book_orders (book_id, book_revision, print_p
 select is(pg_temp.try($$insert into book_orders (book_id, book_revision, print_path, page_count) values ('50000000-0000-0000-0000-000000000001', 1, '00000000-0000-0000-0000-00000000000a/x/1/book.pdf', 30)$$), 'refused', 'with a file from someone else''s folder');
 select is(pg_temp.try($$insert into book_orders (book_id, book_revision, interior_path, cover_path, page_count) values ('50000000-0000-0000-0000-000000000001', 1, '00000000-0000-0000-0000-00000000000a/x/1/interior.pdf', '00000000-0000-0000-0000-00000000000b/x/1/cover.pdf', 30)$$), 'refused', 'or separate files from someone else''s folder');
 select is(pg_temp.try($$insert into book_orders (book_id, book_revision, print_path, page_count, status) values ('50000000-0000-0000-0000-000000000001', 1, '00000000-0000-0000-0000-00000000000b/a.pdf', 30, 'paid')$$), 'refused', 'she can''t mark an order paid');
+
+select is(pg_temp.try($$insert into book_orders (book_id, book_revision, print_path, page_count, ship_first_name, ship_last_name, ship_line1, ship_city, ship_state, ship_zip) values ('50000000-0000-0000-0000-000000000001', 1, '00000000-0000-0000-0000-00000000000b/x/1/book.pdf', 30, 'Maya', 'Lin', '1 Main St', 'Oakland', 'CA', '94612')$$), 'ok', 'she orders with a shipping address');
+select is(pg_temp.try($$insert into book_orders (book_id, book_revision, print_path, page_count, ship_first_name, ship_last_name, ship_line1, ship_city, ship_state, ship_zip) values ('50000000-0000-0000-0000-000000000001', 1, '00000000-0000-0000-0000-00000000000b/x/1/book.pdf', 30, 'Maya', 'Lin', '1 Main St', 'Oakland', 'California', '94612')$$), 'refused', 'a state has to be two letters');
+select is(pg_temp.try($$insert into book_orders (book_id, book_revision, print_path, page_count, gelato_order_id) values ('50000000-0000-0000-0000-000000000001', 1, '00000000-0000-0000-0000-00000000000b/x/1/book.pdf', 30, 'fake')$$), 'refused', 'she can''t say it''s at the printer');
+select is(pg_temp.try($$update book_orders set quote_product_cents = 1$$), 'refused', 'or change the printer''s price');
 
 -- kevin, whose photos are in it, and the stranger see none of it
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
