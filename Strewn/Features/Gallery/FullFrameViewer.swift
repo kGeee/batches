@@ -23,6 +23,8 @@ struct FullFrameViewer: View {
     var onShareBatch: (() -> Void)?
     /// Someone else's photo: report it.
     var onReport: ((Photo) -> Void)?
+    /// The batch, when this photo is yours to post to Instagram or TikTok; nil hides the option.
+    var socialBatch: PhotoCollection?
     /// The batch's font, for captions.
     var captionFont: BatchFont?
     /// Likes and comment counts by photo; nil hides the controls (still loading, or unavailable).
@@ -37,6 +39,7 @@ struct FullFrameViewer: View {
 
     @State private var commentsPhoto: Photo?
     @State private var tagsPhoto: Photo?
+    @State private var socialPhoto: Photo?
     @State private var showTagPins = true
     /// The latest comments on each photo looked at, shown under it.
     @State private var latestComments: [UUID: [PhotoComment]] = [:]
@@ -57,7 +60,8 @@ struct FullFrameViewer: View {
 
     init(photos: [Photo], start: Photo, coverID: UUID? = nil,
          onEdit: ((Photo) -> Void)? = nil, onSetCover: ((Photo) -> Void)? = nil, onRemove: ((Photo) -> Void)? = nil,
-         shareLink: ((Photo) -> URL)? = nil, shareTitle: String = "Batches", onShareBatch: (() -> Void)? = nil, onReport: ((Photo) -> Void)? = nil,
+         shareLink: ((Photo) -> URL)? = nil, shareTitle: String = "Batches", onShareBatch: (() -> Void)? = nil,
+         socialBatch: PhotoCollection? = nil, onReport: ((Photo) -> Void)? = nil,
          captionFont: BatchFont? = nil, reactions: [UUID: PhotoReactions]? = nil, onLike: ((Photo) -> Void)? = nil,
          commentsBatch: PhotoCollection? = nil, canTag: Bool = false, onOpenUser: ((User) -> Void)? = nil,
          onCommentCount: @escaping (Photo, Int) -> Void = { _, _ in },
@@ -79,6 +83,7 @@ struct FullFrameViewer: View {
         self.shareTitle = shareTitle
         self.onShareBatch = onShareBatch
         self.onReport = onReport
+        self.socialBatch = socialBatch
         _currentID = State(initialValue: start.id)
     }
 
@@ -125,6 +130,11 @@ struct FullFrameViewer: View {
                                onOpenUser: onOpenUser,
                                onTagsChange: { onTagsChange(photo, $0) })
                     .presentationDetents([.medium, .large])
+            }
+        }
+        .sheet(item: $socialPhoto) { photo in
+            if let socialBatch {
+                SocialShareSheet(collection: socialBatch, photos: [photo], single: photo)
             }
         }
     }
@@ -205,7 +215,7 @@ struct FullFrameViewer: View {
         }
     }
 
-    private var hasMenu: Bool { onEdit != nil || onSetCover != nil || onRemove != nil || onReport != nil || canTag }
+    private var hasMenu: Bool { onEdit != nil || onSetCover != nil || onRemove != nil || onReport != nil || canTag || socialBatch != nil }
 
     /// The things you do to a photo now and then, kept away from the ones you tap every time.
     @ViewBuilder
@@ -215,6 +225,9 @@ struct FullFrameViewer: View {
         }
         if let onEdit {
             Button("Edit", systemImage: "slider.horizontal.3") { onEdit(photo) }
+        }
+        if socialBatch != nil {
+            Button("Post to Instagram or TikTok", systemImage: "square.and.arrow.up.on.square") { socialPhoto = photo }
         }
         if let onSetCover {
             let isCover = photo.id == coverID

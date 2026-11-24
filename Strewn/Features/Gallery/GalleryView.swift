@@ -22,6 +22,8 @@ struct GalleryView: View {
     @Environment(\.tiltedPiles) private var tiltedPiles
     @State private var showFrames = false
     @State private var showShare = false
+    /// Making Instagram and TikTok posts: from the whole batch, or one photo.
+    @State private var postingSocial: SocialPosting?
     @State private var renaming = false
     @State private var renameDraft = ""
     @State private var showReorder = false
@@ -127,6 +129,10 @@ struct GalleryView: View {
                 .presentationDetents([.height(430)])
         }
         .sheet(isPresented: $showShare) { SharePileSheet(collectionID: collection.id) }
+        .sheet(item: $postingSocial) { posting in
+            SocialShareSheet(collection: collection, photos: posting.single.map { [$0] } ?? postablePhotos, single: posting.single)
+                .environment(\.colorScheme, systemScheme)
+        }
         .sheet(isPresented: $showReorder) { ReorderPhotosSheet(collectionID: collection.id) }
         .sheet(isPresented: $showFont) {
             BatchFontSheet(title: collection.title, current: collection.font) { model.setFont($0, for: collection.id) }
@@ -163,6 +169,7 @@ struct GalleryView: View {
                             onRemove: canRemove(photo) ? { remove($0) } : nil,
                             shareLink: { AppModel.link(to: collection, photo: $0) }, shareTitle: collection.title,
                             onShareBatch: isOwner && !collection.isShared ? { openShareSettings() } : nil,
+                            socialBatch: canPost(photo) ? collection : nil,
                             onReport: canReport(photo) ? { report($0) } : nil,
                             captionFont: collection.font,
                             reactions: reactions,
@@ -305,6 +312,11 @@ struct GalleryView: View {
             Button("Make cover", systemImage: "star") { model.setCover(photo, in: collection.id) }
                 .disabled(photo.id == collection.coverPhotoID)
         }
+        if canPost(photo) {
+            Button("Post to Instagram or TikTok", systemImage: "square.and.arrow.up.on.square") {
+                postingSocial = SocialPosting(single: photo)
+            }
+        }
         if isOwner && !collection.isShared {
             // Nobody else can open this batch yet, so a link would lead nowhere.
             Button("Share", systemImage: "square.and.arrow.up") { showShare = true }
@@ -356,10 +368,20 @@ struct GalleryView: View {
                     Button("Description", systemImage: "text.alignleft") { showDescription = true }
                     Button("Reorder photos", systemImage: "arrow.up.arrow.down") { showReorder = true }
                         .disabled(collection.photos.count < 2)
+                    Button("Post to Instagram or TikTok", systemImage: "square.and.arrow.up.on.square") {
+                        postingSocial = SocialPosting(single: nil)
+                    }
+                    .disabled(postablePhotos.isEmpty)
                 } label: { headerIcon("ellipsis") }
                 .accessibilityLabel("More")
             } else if let owner = collection.owner {
                 Menu {
+                    if !postablePhotos.isEmpty {
+                        // A group batch: the photos you added are yours to post.
+                        Button("Post your photos", systemImage: "square.and.arrow.up.on.square") {
+                            postingSocial = SocialPosting(single: nil)
+                        }
+                    }
                     Button("Report batch", systemImage: "flag") {
                         reporting = ReportTarget(subject: "this batch", report: Report(collectionID: collection.id, reason: .other), owner: owner)
                     }
@@ -571,6 +593,15 @@ struct GalleryView: View {
     /// The editor saves into your own piles, so it's for your photos with a local file on this phone.
     private func canEdit(_ photo: Photo) -> Bool {
         isOwner && photo.addedBy == nil && photo.imageURL.isFileURL
+    }
+
+    /// Photos you added, which you may post elsewhere as your own.
+    private var postablePhotos: [Photo] {
+        SocialShareSheet.postable(in: collection, me: model.me?.id, isOwner: isOwner)
+    }
+
+    private func canPost(_ photo: Photo) -> Bool {
+        SocialShareSheet.canPost(photo, isOwner: isOwner, me: model.me?.id)
     }
 
     /// The owner removes anything; a friend, only what they added.
@@ -877,4 +908,10 @@ private struct ReorderPhotosSheet: View {
         .background(DeskMatBackground())
         .tint(.strewnAccent)
     }
+}
+
+/// What the Instagram and TikTok sheet opens on: one photo, or nil for the batch.
+private struct SocialPosting: Identifiable {
+    let id = UUID()
+    let single: Photo?
 }
