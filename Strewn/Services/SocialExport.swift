@@ -1,4 +1,5 @@
 import AVFoundation
+import Metal
 import SwiftUI
 import CoreImage
 import CoreImage.CIFilterBuiltins
@@ -113,9 +114,9 @@ enum SocialLayout {
     }
 
     /// The longest side, in pixels, the photo needs to be decoded at to fill its place sharply.
-    static func neededLongEdge(for photo: Photo, format: SocialFormat, fill: SocialFill) -> Int {
+    static func neededLongEdge(for photo: Photo, format: SocialFormat, fill: SocialFill, scale: CGFloat = 1) -> Int {
         let rect = placement(of: CGSize(width: photo.pixelWidth, height: photo.pixelHeight), in: format.size, fill: fill)
-        return Int(max(rect.width, rect.height).rounded(.up))
+        return Int((max(rect.width, rect.height) * scale).rounded(.up))
     }
 }
 
@@ -127,9 +128,10 @@ final class SocialRenderer: @unchecked Sendable {
     let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     static let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
 
-    /// One post: the photo on its fill, at the format's exact size.
-    func render(_ photo: CGImage, format: SocialFormat, fill: SocialFill, background: CGColor) -> CGImage? {
-        let canvas = format.size
+    /// One post: the photo on its fill, at the format's exact size times `scale` (below 1 for a
+    /// quick preview that looks the same, just smaller).
+    func render(_ photo: CGImage, format: SocialFormat, fill: SocialFill, background: CGColor, scale: CGFloat = 1) -> CGImage? {
+        let canvas = CGSize(width: (format.size.width * scale).rounded(), height: (format.size.height * scale).rounded())
         guard let context = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8,
                                       bytesPerRow: 0, space: colorSpace, bitmapInfo: Self.bitmapInfo) else { return nil }
         context.interpolationQuality = .high
@@ -139,7 +141,7 @@ final class SocialRenderer: @unchecked Sendable {
             context.setFillColor(background)
             context.fill(whole)
         case .blur:
-            if let backdrop = blurredBackdrop(photo, canvas: canvas) {
+            if let backdrop = blurredBackdrop(photo, canvas: canvas, scale: scale) {
                 context.draw(backdrop, in: whole)
             } else {
                 context.setFillColor(background)
@@ -155,7 +157,7 @@ final class SocialRenderer: @unchecked Sendable {
 
     /// The photo scaled to cover the post, blurred and dimmed a touch so the sharp copy stands out.
     /// Worked at a quarter size: it's blurred anyway, and drawing it up is free.
-    private func blurredBackdrop(_ photo: CGImage, canvas: CGSize) -> CGImage? {
+    private func blurredBackdrop(_ photo: CGImage, canvas: CGSize, scale: CGFloat) -> CGImage? {
         let small = CGSize(width: (canvas.width / 4).rounded(), height: (canvas.height / 4).rounded())
         let input = CIImage(cgImage: photo)
         let scale = max(small.width / input.extent.width, small.height / input.extent.height)
@@ -165,7 +167,7 @@ final class SocialRenderer: @unchecked Sendable {
             y: -scaled.extent.minY - (scaled.extent.height - small.height) / 2))
         let blur = CIFilter.gaussianBlur()
         blur.inputImage = centred.clampedToExtent()
-        blur.radius = 14
+        blur.radius = Float(14 * scale)
         let tone = CIFilter.colorControls()
         tone.inputImage = blur.outputImage
         tone.brightness = -0.06
@@ -227,7 +229,13 @@ enum SlideshowWriter {
         }
     }
 
-    /// `slide` renders one post on demand, so only the current and next are held in memory.
+    /// How many slides past the one on screen are loaded ahead, so a slow photo load overlaps
+    /// encoding instead of stalling it.
+    static let lookahead = 2
+
+    /// `slide` renders one post on demand; only the slides on screen and the few loading ahead
+    /// are held in memory. Frames are composed on the GPU with Core Image straight into the
+    /// encoder's pixel buffers.
     static func write(count: Int, size: CGSize, options: Options, to url: URL,
                       slide: @escaping (Int) async -> CGImage?,
                       progress: @escaping @MainActor (Double) -> Void) async throws {
@@ -257,8 +265,8 @@ enum SlideshowWriter {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: width,
             kCVPixelBufferHeightKey as String: height,
-            kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+            kCVPixelBufferMetalCompatibilityKey as String: true
         ])
         guard writer.canAdd(input) else { throw Failure.setup }
         writer.add(input)
@@ -266,11 +274,20 @@ enum SlideshowWriter {
         writer.startSession(atSourceTime: .zero)
 
         let timing = Timing(slides: count, options: options)
-        let colorSpace = SocialRenderer.shared.colorSpace
-        var held: [Int: CGImage] = [:]
-        func slideImage(_ index: Int) async throws -> CGImage {
+        let composer = FrameComposer(size: size)
+        // Slides load in their own tasks, `lookahead` ahead of the one being encoded.
+        var loading: [Int: Task<CIImage?, Never>] = [:]
+        func startLoading(through last: Int) {
+            for index in 0...min(last, count - 1) where loading[index] == nil {
+                loading[index] = Task { await slide(index).map { composer.upload($0) } ?? nil }
+            }
+        }
+        var held: [Int: CIImage] = [:]
+        func slideImage(_ index: Int) async throws -> CIImage {
             if let image = held[index] { return image }
-            guard let image = await slide(index) else { throw Failure.missingSlide(index) }
+            startLoading(through: index + lookahead)
+            guard let image = await loading[index]?.value else { throw Failure.missingSlide(index) }
+            loading[index] = nil
             held = held.filter { $0.key >= index - 1 }   // keep only what's still on screen
             held[index] = image
             return image
@@ -284,30 +301,17 @@ enum SlideshowWriter {
                 let fade = timing.fadeIn(frame: frame, slides: count)
                 let next = fade > 0 ? try await slideImage(index + 1) : nil
 
-                while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+                while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
                 guard let pool = adaptor.pixelBufferPool else { throw Failure.setup }
                 var made: CVPixelBuffer?
-                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
-                guard let buffer = made else { throw Failure.write }
-
-                CVPixelBufferLockBaseAddress(buffer, [])
-                if let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height,
-                                           bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-                                           space: colorSpace, bitmapInfo: SocialRenderer.bitmapInfo) {
-                    context.interpolationQuality = .medium
-                    func draw(_ image: CGImage, slide: Int) {
-                        let grow = options.slowZoom ? zoomAmount * timing.zoomProgress(slide: slide, frame: frame) : 0
-                        let w = size.width * (1 + grow), h = size.height * (1 + grow)
-                        context.draw(image, in: CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h))
-                    }
-                    draw(current, slide: index)
-                    if let next {
-                        context.setAlpha(fade)
-                        draw(next, slide: index + 1)
-                        context.setAlpha(1)
-                    }
+                guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made) == kCVReturnSuccess, let buffer = made else {
+                    throw Failure.write
                 }
-                CVPixelBufferUnlockBaseAddress(buffer, [])
+                func grow(_ slide: Int) -> CGFloat {
+                    options.slowZoom ? zoomAmount * timing.zoomProgress(slide: slide, frame: frame) : 0
+                }
+                composer.render(current: current, currentGrow: grow(index),
+                                next: next, nextGrow: next == nil ? 0 : grow(index + 1), fade: fade, into: buffer)
 
                 guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps)) else {
                     throw writer.error ?? Failure.write
@@ -318,6 +322,7 @@ enum SlideshowWriter {
                 }
             }
         } catch {
+            loading.values.forEach { $0.cancel() }
             writer.cancelWriting()
             try? FileManager.default.removeItem(at: url)
             throw error
@@ -326,6 +331,80 @@ enum SlideshowWriter {
         input.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? Failure.write }
+    }
+
+    /// Composes slideshow frames on the GPU: each slide is uploaded once to an IOSurface-backed
+    /// buffer, then every frame is a scale (the slow zoom) and an alpha blend (the cross-fade)
+    /// rendered by Core Image into the encoder's buffer. The geometry matches the old Core
+    /// Graphics drawing: each post scaled about its centre and cropped to the canvas.
+    final class FrameComposer: @unchecked Sendable {
+        let size: CGSize
+        private let context: CIContext
+        private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
+        init(size: CGSize) {
+            self.size = size
+            let space = CGColorSpace(name: CGColorSpace.sRGB)!
+            let options: [CIContextOption: Any] = [.workingColorSpace: space, .outputColorSpace: space, .cacheIntermediates: false]
+            if let device = MTLCreateSystemDefaultDevice() {
+                context = CIContext(mtlDevice: device, options: options)
+            } else {
+                context = CIContext(options: options)
+            }
+        }
+
+        /// The slide in GPU-friendly memory, so frames don't re-upload it from a CGImage each time.
+        func upload(_ image: CGImage) -> CIImage? {
+            let attributes: [String: Any] = [
+                kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+            var made: CVPixelBuffer?
+            guard CVPixelBufferCreate(nil, image.width, image.height, kCVPixelFormatType_32BGRA,
+                                      attributes as CFDictionary, &made) == kCVReturnSuccess, let buffer = made else { return nil }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+            guard let cg = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: image.width, height: image.height,
+                                     bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                                     space: colorSpace, bitmapInfo: SocialRenderer.bitmapInfo) else { return nil }
+            cg.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            let ci = CIImage(cvPixelBuffer: buffer, options: [.colorSpace: colorSpace])
+            // Stretch to the canvas if a slide came back at another size, as the old drawing did.
+            let sx = size.width / ci.extent.width, sy = size.height / ci.extent.height
+            return sx == 1 && sy == 1 ? ci : ci.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        }
+
+        private func zoomed(_ image: CIImage, grow: CGFloat) -> CIImage {
+            guard grow > 0 else { return image }
+            let scale = 1 + grow
+            return image.transformed(by: CGAffineTransform(translationX: size.width / 2, y: size.height / 2)
+                .scaledBy(x: scale, y: scale)
+                .translatedBy(x: -size.width / 2, y: -size.height / 2))
+        }
+
+        func render(current: CIImage, currentGrow: CGFloat, next: CIImage?, nextGrow: CGFloat, fade: CGFloat,
+                    into buffer: CVPixelBuffer) {
+            var frame = zoomed(current, grow: currentGrow)
+            if let next, fade > 0 {
+                let top = zoomed(next, grow: nextGrow)
+                    .applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: fade)])
+                frame = top.composited(over: frame)
+            }
+            let canvas = CGRect(origin: .zero, size: size)
+            context.render(frame.cropped(to: canvas), to: buffer, bounds: canvas, colorSpace: colorSpace)
+        }
+
+        /// One frame as a CGImage, for checking the composer against the old drawing.
+        func image(current: CIImage, currentGrow: CGFloat, next: CIImage?, nextGrow: CGFloat, fade: CGFloat) -> CGImage? {
+            var made: CVPixelBuffer?
+            CVPixelBufferCreate(nil, Int(size.width), Int(size.height), kCVPixelFormatType_32BGRA,
+                                [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()] as CFDictionary, &made)
+            guard let buffer = made else { return nil }
+            render(current: current, currentGrow: currentGrow, next: next, nextGrow: nextGrow, fade: fade, into: buffer)
+            return context.createCGImage(CIImage(cvPixelBuffer: buffer), from: CGRect(origin: .zero, size: size))
+        }
     }
 }
 
@@ -353,16 +432,16 @@ enum SocialExport {
     }
 
     /// The developed photo, decoded just big enough for its place in the post.
-    static func source(_ photo: Photo, format: SocialFormat, fill: SocialFill) async -> CGImage? {
-        let needed = SocialLayout.neededLongEdge(for: photo, format: format, fill: fill)
+    static func source(_ photo: Photo, format: SocialFormat, fill: SocialFill, scale: CGFloat = 1) async -> CGImage? {
+        let needed = SocialLayout.neededLongEdge(for: photo, format: format, fill: fill, scale: scale)
         let side = PhotoImageLoader.bucket(for: CGFloat(needed))
         let image = await PhotoImageLoader.shared.image(for: photo.source(for: .l), maxPixelSide: side)
         return image?.cgImage
     }
 
-    static func post(_ photo: Photo, format: SocialFormat, fill: SocialFill, background: CGColor) async -> CGImage? {
-        guard let source = await source(photo, format: format, fill: fill) else { return nil }
-        return SocialRenderer.shared.render(source, format: format, fill: fill, background: background)
+    static func post(_ photo: Photo, format: SocialFormat, fill: SocialFill, background: CGColor, scale: CGFloat = 1) async -> CGImage? {
+        guard let source = await source(photo, format: format, fill: fill, scale: scale) else { return nil }
+        return SocialRenderer.shared.render(source, format: format, fill: fill, background: background, scale: scale)
     }
 
     /// One JPEG per photo, in batch order, named so they sort that way in Files and the share sheet.
