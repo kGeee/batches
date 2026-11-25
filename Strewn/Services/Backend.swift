@@ -166,7 +166,7 @@ actor MockBackend: Backend {
     } ?? []) + (SampleData.collections.first?.photos.dropFirst().first.map {
         // One on the tall second photo, so the viewer shows a comment under a portrait too.
         [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000004")!, photoID: $0.id, author: SampleData.theo,
-                      authorID: SampleData.theo.id, body: "Fr right", createdAt: .now.addingTimeInterval(-1800))]
+                      authorID: SampleData.theo.id, body: "Golden hour on the boardwalk. So good.", createdAt: .now.addingTimeInterval(-1800))]
     } ?? [])
     private var photoTags: [PhotoTag]
     private var notificationLog: [ActivityItem]

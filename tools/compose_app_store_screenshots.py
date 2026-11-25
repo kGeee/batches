@@ -3,7 +3,7 @@
 Usage: python3 tools/compose_app_store_screenshots.py <captures dir> marketing/app-store
 Captures are full-screen 6.9" simulator PNGs named 1-desk, 2-batch, 3-friends, 4-photo, 5-group,
 6-share. Writes one folder per App Store Connect slot, named for its slot and pixel size."""
-import os, random, sys
+import os, sys
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 SHOTS, OUT = sys.argv[1], sys.argv[2]
@@ -15,34 +15,18 @@ SANS = "/System/Library/Fonts/SFNS.ttf"
 SIZES = [("6.9in", (1320, 2868)), ("6.9in", (1290, 2796)), ("6.5in", (1284, 2778)), ("6.5in", (1242, 2688)),
          ("6.3in", (1206, 2622)), ("6.1in", (1179, 2556))]
 
-LIGHT = dict(bg=(227, 219, 204), ink=(29, 27, 23), sub=(98, 92, 82), line=(0, 0, 0))
-DARK = dict(bg=(38, 36, 31), ink=(242, 236, 225), sub=(176, 168, 154), line=(255, 255, 255))
+# The app's fog: a flat grey-green by day, a deep one at night.
+LIGHT = dict(bg=(227, 229, 224), ink=(43, 46, 44), sub=(112, 118, 113))
+DARK = dict(bg=(27, 29, 28), ink=(236, 238, 234), sub=(160, 166, 160))
 
 SCREENS = [
     ("1-desk", "Your photos,\nin batches", "Every day, trip and night out on one desk.", LIGHT),
     ("2-batch", "Full frame.\nNever cropped.", "White borders, instant film, mats and film strips.", LIGHT),
     ("3-friends", "See what your\nfriends share", "Follow people and get their new batches.", LIGHT),
-    ("4-photo", "Likes and\ncomments", "From the people who were there.", LIGHT),
+    ("4-photo", "Double-tap\nto like", "Comments from the people who were there.", LIGHT),
     ("5-group", "Everyone's shots,\none batch", "Let friends add their photos to yours.", DARK),
     ("6-share", "You decide\nwho sees it", "Every batch starts private.", LIGHT),
 ]
-
-
-def linen(color, line, seed):
-    """A faint woven texture like the app's desk."""
-    img = Image.new("RGB", (W, H), color)
-    over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(over)
-    rnd = random.Random(seed)
-    for _ in range(900):
-        if rnd.random() < 0.5:
-            y = rnd.randrange(H); x = rnd.randrange(W); L = rnd.randrange(30, 220)
-            d.line([(x, y), (x + L, y)], fill=line + (rnd.randrange(6, 16),), width=rnd.choice([1, 2]))
-        else:
-            x = rnd.randrange(W); y = rnd.randrange(H); L = rnd.randrange(30, 220)
-            d.line([(x, y), (x, y + L)], fill=line + (rnd.randrange(6, 16),), width=rnd.choice([1, 2]))
-    img.paste(over, (0, 0), over)
-    return img
 
 
 def rounded(img, r):
@@ -53,7 +37,7 @@ def rounded(img, r):
 
 
 def compose(name, title, sub, theme, i):
-    canvas = linen(theme["bg"], theme["line"], i).convert("RGBA")
+    canvas = Image.new("RGBA", (W, H), theme["bg"] + (255,))
     d = ImageDraw.Draw(canvas)
     tfont = ImageFont.truetype(SERIF, 124)
     try:
