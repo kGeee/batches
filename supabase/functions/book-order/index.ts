@@ -12,13 +12,13 @@
 // Secrets: GELATO_API_KEY and GELATO_PHOTOBOOK_UID, as for print-cover. SUPABASE_URL and
 // SUPABASE_SERVICE_ROLE_KEY are provided by the platform.
 //
-// Gelato counts a photo book's pages with its covers (the four sides of the boards), so we send
-// the book's own pages plus four. Check that on the first draft order before printing for real.
+// pageCount is the book's own pages. Gelato then expects the file to hold three more: the cover
+// sheet, the endpaper and the last page, which is how print.js builds it (a 62-page book is a
+// 65-page file). The first draft, sent with pages plus four, was refused for wanting 69.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 
 const env = (name: string) => Deno.env.get(name)?.trim() ?? ''
 const gelato = 'https://order.gelatoapis.com/v4'
-const coverPages = 4
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
   if (!signed?.signedUrl) return json({ ...answer(order), error: 'the print file is missing' }, 409)
   const item = {
     itemReferenceId: order.id, productUid: product, quantity: order.quantity,
-    pageCount: order.page_count + coverPages, files: [{ type: 'default', url: signed.signedUrl }],
+    pageCount: order.page_count, files: [{ type: 'default', url: signed.signedUrl }],
   }
   const call = (path: string, body: unknown) => fetch(`${gelato}${path}`, {
     method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
