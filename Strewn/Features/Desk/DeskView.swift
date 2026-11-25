@@ -31,12 +31,18 @@ struct DeskView: View {
     @State private var grabOffset: CGSize = .zero
     @State private var dragTranslation: CGSize = .zero
     @State private var dropTargetID: String?
-    /// Followers and filters show while the desk moves near the top, then tuck up under your
-    /// name once it's been still for a moment.
+    /// Followers and filters show when you scroll up to the top, then tuck up under your name once
+    /// the desk has been still for a moment.
     @State private var barShown = true
     @State private var barHide: Task<Void, Never>?
     /// How far the top of the desk is scrolled: 0 at rest, below 0 scrolled down, above 0 pulled.
     @State private var scrollTop: CGFloat = 0
+    /// Where the top sits at rest, the lowest it's been scrolled since the bar last moved, and the
+    /// sizes that say how far the desk can scroll at all (past that is the bounce at the bottom).
+    @State private var restingTop: CGFloat?
+    @State private var deepest: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var slots: [String: CGRect] = [:]
 
@@ -180,10 +186,12 @@ struct DeskView: View {
                     }
                 }
                 .padding(.bottom, 24)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }
             // A short desk still gives under a pull, so the followers and filters can always be reached.
             .scrollBounceBehavior(.always)
             .coordinateSpace(name: Self.scrollSpace)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = $0 }
         }
     }
 
@@ -202,10 +210,21 @@ struct DeskView: View {
         barShown || voiceOver || filter != .all || layout.mode == .freehand
     }
 
+    /// Brings the bar back only when you scroll up towards the top, or pull down there. Scrolling
+    /// down leaves it tucked away, and so does the spring back from overshooting the bottom (on a
+    /// short desk, that's any scroll down), which moves up but isn't you scrolling up.
     private func deskMoved(to top: CGFloat) {
-        scrollTop = top
-        if top > -Self.nearTop, !barShown {
+        if restingTop == nil { restingTop = top }
+        let offset = top - (restingTop ?? top)
+        let furthest = max(0, contentHeight - viewportHeight)
+        let real = max(offset, -furthest)          // the overshoot past the bottom doesn't count
+        deepest = min(deepest, real)
+        scrollTop = offset
+        let pulledDown = offset > 8
+        let scrolledUp = real - deepest > 24
+        if (pulledDown || scrolledUp), offset > -Self.nearTop, !barShown {
             withAnimation(.snappy(duration: 0.32)) { barShown = true }
+            deepest = real
         }
         scheduleBarHide()
     }
@@ -218,6 +237,7 @@ struct DeskView: View {
             try? await Task.sleep(for: Self.barLinger)
             guard !Task.isCancelled, scrollTop > -Self.nearTop, barShown else { return }
             withAnimation(.smooth(duration: 0.5)) { barShown = false }
+            deepest = max(scrollTop, -max(0, contentHeight - viewportHeight))
         }
     }
 
