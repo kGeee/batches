@@ -18,13 +18,24 @@ The app runs on Apple's own frameworks, with no web views:
 | Area | Frameworks |
 | --- | --- |
 | UI, transitions, haptics | SwiftUI (`matchedGeometryEffect`, `Layout`, `scrollTargetBehavior`, `sensoryFeedback`, context menus) |
-| Library | PhotosUI `PhotosPicker` to start and add to batches; PhotoKit to write edits back as revertible Photos edits (`PHContentEditingOutput` with the recipe as adjustment data) |
+| Library | PhotosUI `PhotosPicker` to start and add to batches; PhotoKit for suggested batches in New batch (`Strewn/Services/SmartBatches.swift`) and to write edits back as revertible Photos edits (`PHContentEditingOutput` with the recipe as adjustment data) |
 | Develop and edit | Core Image (`CIRAWFilter`, built-in filters, custom Metal CI kernels), MetalKit preview |
 | Photos extension | "Edit with Batches" inside the Photos app (`PHContentEditingController`), sharing the same editor and pipeline |
 | Sharing | LinkPresentation: a `batches.space` link with the batch's title and a photo attached, so Messages shows a preview without fetching anything |
 | Links | Universal links (`applinks:batches.space`) and the `strewn://` scheme |
 | Copy/paste edits | `UIPasteboard` with a custom type, so a copied recipe survives between sessions |
 | Capture (switched off) | AVFoundation: `AVCapturePhotoOutput` with Bayer RAW and Apple ProRAW, manual ISO, shutter and white balance; `onCameraCaptureEvent` (AVKit, iOS 18) for Camera Control and the volume buttons |
+
+## Suggested batches
+
+New batch suggests days and trips from the camera roll, each shown as a small pile. They come from `SmartBatchGrouping` in `Strewn/Services/SmartBatches.swift`, run on the phone over the last 12 months of the library:
+
+- Photos more than 90 minutes apart start a new moment; moments under 6 hours and 25 km apart join into a day; days more than 80 km from home (the busiest ~1 km grid cell) join into a trip.
+- Screenshots, hidden photos, shared-album photos and photos already in one of your batches are left out, and a burst counts once.
+- A suggestion needs at least 6 photos. The review grid picks the first 60 (the batch limit) and you tap to change them.
+- The place name comes from reverse geocoding the suggestion's centre and fills the batch's place, which you can edit. Photo locations never leave the phone.
+
+Suggestions need full or limited library access, asked for only from the card in New batch. Without it the card goes away and the system picker works as before. Onboarding and "add photos" still use the system picker. Grouping photos that were imported together (film scans, AirDrops) isn't built yet: PhotoKit has no public date-added field, so it needs a test on a real library first.
 
 ## Core rule: full frame, never cropped
 

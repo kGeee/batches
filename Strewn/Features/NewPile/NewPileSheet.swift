@@ -4,13 +4,22 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Start a pile from the Photos library with the system picker. The chosen photos sit on the
-/// linen as a loose stack in the frame you pick, so you see the pile before you make it.
+/// Start a pile from the Photos library: from a suggested day or trip, or with the system
+/// picker. The chosen photos sit on the linen as a loose stack in the frame you pick, so you
+/// see the pile before you make it.
 struct NewPileSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
     @State private var selection: [PhotosPickerItem] = []
+    /// Photos taken from a suggested batch. Picking with the system picker replaces them.
+    @State private var suggestedPicked: [PHAsset] = []
+    @State private var suggestions = SmartBatchSuggestions()
+    @State private var reviewing: SmartBatch?
+    /// Filled in from a suggestion's place name, and editable.
+    @State private var place = ""
+    /// The name a suggestion filled in, so a later pick only replaces a name you didn't type.
+    @State private var suggestedTitle: String?
     /// Picks already downloaded from Google Photos, ready to go with the library picks.
     @State private var googlePicked: [Photo] = []
     @State private var google = GooglePhotosPicking()
@@ -25,6 +34,7 @@ struct NewPileSheet: View {
             PaperHeader(title: "New batch", onCancel: { dismiss() })
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
+                    SuggestedBatchesRow(suggestions: suggestions, frame: frame) { reviewing = $0 }
                     VStack(spacing: 12) {
                         picker
                         if GooglePhotos.isConfigured { googleButton }
@@ -37,6 +47,16 @@ struct NewPileSheet: View {
                             .submitLabel(.done)
                             .padding(.vertical, 6)
                             .overlay(alignment: .bottom) { Rectangle().fill(.primary.opacity(naming ? 0.5 : 0.18)).frame(height: 1) }
+                    }
+                    if !suggestedPicked.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            label("Place")
+                            TextField("Where it was", text: $place)
+                                .font(.system(.body, design: .serif))
+                                .submitLabel(.done)
+                                .padding(.vertical, 6)
+                                .overlay(alignment: .bottom) { Rectangle().fill(.primary.opacity(0.18)).frame(height: 1) }
+                        }
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         label("Frame")
@@ -58,17 +78,42 @@ struct NewPileSheet: View {
         }
         .background(DeskMatBackground())
         .tint(.strewnAccent)
-        .task(id: PreviewKey(library: selection, google: googlePicked.map(\.id))) { await loadPreviews() }
+        .task(id: PreviewKey(library: selection, suggested: suggestedPicked.map(\.localIdentifier), google: googlePicked.map(\.id))) {
+            await loadPreviews()
+        }
+        .task { await suggestions.load(excluding: model.batchedAssetIDs) }
+        .onChange(of: selection) { _, picks in
+            // The system picker takes over from a suggestion.
+            if !picks.isEmpty, !suggestedPicked.isEmpty { useSuggestion([], from: nil) }
+        }
+        .sheet(item: $reviewing) { batch in
+            SmartBatchReviewView(batch: batch, place: suggestions.places[batch.id]) { assets in
+                useSuggestion(assets, from: batch)
+            }
+        }
         .googlePhotosAlert(google)
         .animation(.snappy, value: google.stage)
     }
 
     private struct PreviewKey: Equatable {
         let library: [PhotosPickerItem]
+        let suggested: [String]
         let google: [UUID]
     }
 
-    private var pickedCount: Int { selection.count + googlePicked.count }
+    private var pickedCount: Int { selection.count + suggestedPicked.count + googlePicked.count }
+
+    /// Puts a suggestion's photos on the stack in place of system picks, and fills in its name
+    /// and place unless you've typed your own name.
+    private func useSuggestion(_ assets: [PHAsset], from batch: SmartBatch?) {
+        suggestedPicked = assets
+        if !assets.isEmpty { selection = [] }
+        let name = batch.flatMap { suggestions.places[$0.id] }
+        let newTitle = batch?.suggestedTitle(place: name)
+        if title.isEmpty || title == suggestedTitle { title = newTitle ?? "" }
+        suggestedTitle = newTitle
+        place = name ?? ""
+    }
 
     /// Adds picks from Google Photos to the stack; the system picker stays the big target above.
     @ViewBuilder private var googleButton: some View {
@@ -77,7 +122,7 @@ struct NewPileSheet: View {
         } else {
             Button {
                 Task {
-                    let photos = await google.run(collectionID: UUID(), maxCount: max(1, 60 - selection.count))
+                    let photos = await google.run(collectionID: UUID(), maxCount: max(1, 60 - selection.count - suggestedPicked.count))
                     if !photos.isEmpty { googlePicked = photos }
                 }
             } label: {
@@ -206,6 +251,10 @@ struct NewPileSheet: View {
                 images.append(image)
             }
         }
+        for asset in suggestedPicked.prefix(max(0, Self.fan.count - images.count)) {
+            guard !Task.isCancelled else { return }
+            if let image = await LibraryThumbnails.image(for: asset, maxPixelSide: 400) { images.append(image) }
+        }
         for photo in googlePicked.prefix(max(0, Self.fan.count - images.count)) {
             if let image = PhotoImport.thumbnail(at: photo.imageURL, maxPixelSide: 400) { images.append(image) }
         }
@@ -218,13 +267,14 @@ struct NewPileSheet: View {
         defer { isImporting = false }
         let collectionID = UUID()
         let library = await PhotoImport.photos(from: selection, collectionID: collectionID)
-        let photos = (library + googlePicked).enumerated().map { index, photo in
+        let suggested = await PhotoImport.photos(from: suggestedPicked, collectionID: collectionID)
+        let photos = (library + suggested + googlePicked).enumerated().map { index, photo in
             var photo = photo
             photo.collectionID = collectionID
             photo.sortIndex = index
             return photo
         }
-        model.createPile(title: title.isEmpty ? "Untitled batch" : title, photos: photos, frame: frame)
+        model.createPile(title: title.isEmpty ? "Untitled batch" : title, place: place, photos: photos, frame: frame)
         dismiss()
     }
 }
