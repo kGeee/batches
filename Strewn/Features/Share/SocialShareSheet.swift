@@ -19,6 +19,7 @@ struct SocialShareSheet: View {
     @State private var chosen: [UUID] = []
     @State private var secondsPerPhoto = 2.5
     @State private var slowZoom = true
+    @State private var transition = SlideTransition.fade
     @State private var preview: UIImage?
     /// Small renders of every picked photo for the video preview, in order; nil while loading.
     @State private var previewSlides: [UIImage?] = []
@@ -77,6 +78,16 @@ struct SocialShareSheet: View {
                             Text("4 s").tag(4.0)
                         }
                         .pickerStyle(.segmented)
+                    }
+                    PaperDivider()
+                    PaperRow {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Between photos").font(.subheadline).foregroundStyle(.secondary)
+                            Picker("Between photos", selection: $transition) {
+                                ForEach(SlideTransition.allCases) { Text($0.title).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                        }
                     }
                     PaperDivider()
                     PaperRow { Toggle("Slow zoom", isOn: $slowZoom).tint(.strewnAccent) }
@@ -201,7 +212,7 @@ struct SocialShareSheet: View {
     private static let previewScale: CGFloat = 1.0 / 3
 
     private var videoOptions: SlideshowWriter.Options {
-        SlideshowWriter.Options(secondsPerPhoto: secondsPerPhoto, slowZoom: slowZoom)
+        SlideshowWriter.Options(secondsPerPhoto: secondsPerPhoto, slowZoom: slowZoom, transition: transition)
     }
 
     // MARK: Picking photos
@@ -362,10 +373,16 @@ struct SlideshowPreview: View {
             let index = frame / timing.framesPerSlide
             let fade = timing.fadeIn(frame: frame, slides: slides.count)
             GeometryReader { proxy in
+                let changing = fade > 0 && index + 1 < slides.count && slides[index + 1] != nil
+                let pose = options.transition.pose(fade)
                 ZStack {
-                    slide(index, frame: frame, timing: timing)
-                    if fade > 0, index + 1 < slides.count, slides[index + 1] != nil {
-                        slide(index + 1, frame: frame, timing: timing).opacity(fade)
+                    Color.black
+                    slide(index, frame: frame, timing: timing, extraScale: changing ? pose.outgoingScale : 0)
+                        .offset(x: changing ? pose.outgoingShift * proxy.size.width : 0)
+                    if changing {
+                        slide(index + 1, frame: frame, timing: timing, extraScale: pose.incomingScale)
+                            .offset(x: pose.incomingShift * proxy.size.width)
+                            .opacity(pose.incomingOpacity)
                     }
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
@@ -408,12 +425,12 @@ struct SlideshowPreview: View {
 
     /// The slide at `index`, or the nearest earlier one that has loaded, zoomed like the writer.
     @ViewBuilder
-    private func slide(_ index: Int, frame: Int, timing: SlideshowWriter.Timing) -> some View {
+    private func slide(_ index: Int, frame: Int, timing: SlideshowWriter.Timing, extraScale: CGFloat = 0) -> some View {
         let ready = (0...min(index, slides.count - 1)).reversed().first { slides[$0] != nil }
         if let ready, let image = slides[ready] {
             let grow = options.slowZoom ? SlideshowWriter.zoomAmount * timing.zoomProgress(slide: index, frame: frame) : 0
             Image(uiImage: image).resizable().interpolation(.medium)
-                .scaleEffect(1 + grow)
+                .scaleEffect(1 + grow + extraScale)
         } else {
             Rectangle().fill(.quaternary)
         }

@@ -124,46 +124,51 @@ private struct PressablePileStyle: ButtonStyle {
     }
 }
 
-/// A print as it sits in a suggestion: the whole photo with a thin white border and a soft
-/// shadow. Never cropped.
+/// A print as it sits in a suggestion: a square white mat of a fixed size with the whole
+/// photo centred inside it, so every print in a pile is the same shape whatever the photo.
 private struct SuggestionPrint: View {
     let image: UIImage?
-    var maxSide: CGFloat
+    var side: CGFloat
 
     var body: some View {
-        Group {
+        ZStack {
+            Color(white: 0.985)
             if let image {
-                Image(uiImage: image).resizable().aspectRatio(image.size, contentMode: .fit)
+                Image(uiImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .padding(side * 0.07)
             } else {
-                Rectangle().fill(.foreground.opacity(0.06)).aspectRatio(0.8, contentMode: .fit)
+                Rectangle().fill(Color.black.opacity(0.05)).padding(side * 0.07)
             }
         }
-        .frame(maxWidth: maxSide, maxHeight: maxSide)
-        .padding(3.5)
-        .background(Color(white: 0.985))
-        .shadow(color: .black.opacity(0.22), radius: 3, y: 1.5)
+        .frame(width: side, height: side)
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.16), radius: 2.5, y: 1.5)
     }
 }
 
-/// One suggestion: a fanned pile of three of its photos, its name, when it was, and a count.
+/// One suggestion: a tidy pile of three of its photos, its name, when it was, and a count.
 struct SuggestionCard: View {
     let batch: SmartBatch
     let place: String?
 
-    static let width: CGFloat = 156
-    static let pileHeight: CGFloat = 138
+    static let width: CGFloat = 150
+    static let pileHeight: CGFloat = 132
+    private static let printSide: CGFloat = 112
 
     @State private var images: [UIImage] = []
 
-    /// Back left, back right, front: far enough apart that every print shows.
-    private static let fan: [(angle: Double, x: CGFloat, y: CGFloat)] = [(-8, -26, -4), (7, 26, -2), (-1.5, 0, 6)]
+    /// Back left, back right, front: small, even tilts so the pile reads as a stack.
+    private static let fan: [(angle: Double, x: CGFloat, y: CGFloat)] = [(-5, -8, -3), (4, 8, -4), (0, 0, 3)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack {
                 ForEach(0..<3, id: \.self) { index in
                     let spot = Self.fan[index]
-                    SuggestionPrint(image: index < images.count ? images[index] : nil, maxSide: index == 2 ? 100 : 84)
+                    SuggestionPrint(image: index < images.count ? images[index] : nil, side: Self.printSide)
                         .rotationEffect(.degrees(spot.angle))
                         .offset(x: spot.x, y: spot.y)
                 }
@@ -176,7 +181,7 @@ struct SuggestionCard: View {
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(Color.strewnAccent, in: Capsule())
                         .foregroundStyle(Color.onAccent)
-                        .offset(x: 2, y: -2)
+                        .offset(x: 4, y: 0)
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -185,7 +190,7 @@ struct SuggestionCard: View {
                     .padding(.horizontal, 7).padding(.vertical, 3)
                     .background(.black.opacity(0.62), in: Capsule())
                     .foregroundStyle(.white)
-                    .offset(x: -6, y: -2)
+                    .offset(x: -8, y: -4)
                     .accessibilityHidden(true)
             }
 
@@ -207,7 +212,7 @@ struct SuggestionCard: View {
             let picks = [ids[ids.count / 4], ids[(ids.count * 3) / 4], ids[ids.count / 2]]
             var loaded: [UIImage] = []
             for asset in SmartBatchSuggestions.assets(withIDs: picks) {
-                if let image = await LibraryThumbnails.image(for: asset, maxPixelSide: 260) { loaded.append(image) }
+                if let image = await LibraryThumbnails.image(for: asset, maxPixelSide: 360) { loaded.append(image) }
             }
             withAnimation(.easeOut(duration: 0.25)) { images = loaded }
         }
@@ -486,11 +491,13 @@ private struct ReviewThumbnail: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            if let image {
-                Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
-            } else {
-                Rectangle().fill(.foreground.opacity(0.06))
-            }
+            // The slot already has the photo's shape, so filling it shows the whole photo with
+            // no slivers of background when a thumbnail's size rounds a little differently.
+            Rectangle().fill(.foreground.opacity(0.06))
+                .overlay {
+                    if let image { Image(uiImage: image).resizable().scaledToFill() }
+                }
+                .clipped()
             Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 20, weight: .semibold))
                 .symbolRenderingMode(.palette)

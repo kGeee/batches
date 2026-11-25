@@ -187,11 +187,61 @@ final class SocialRenderer: @unchecked Sendable {
 
 /// Writes posts into an H.264 MP4: each photo holds for a few seconds, cross-fades into the next,
 /// and drifts in slowly if asked. No sound: Instagram and TikTok both add music at posting.
+/// How one photo gives way to the next in a slideshow.
+enum SlideTransition: String, CaseIterable, Identifiable {
+    /// The next photo fades in over the last.
+    case fade
+    /// The next photo pushes the last one off to the left.
+    case slide
+    /// The next photo settles in from slightly larger as it fades in.
+    case zoom
+    /// Straight from one to the next.
+    case cut
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .fade: "Fade"
+        case .slide: "Slide"
+        case .zoom: "Zoom"
+        case .cut: "Cut"
+        }
+    }
+
+    /// Eased so moves start and land gently; a fade stays linear, which reads evenly.
+    func eased(_ progress: CGFloat) -> CGFloat {
+        let p = min(1, max(0, progress))
+        return self == .fade ? p : p * p * (3 - 2 * p)
+    }
+
+    /// Where the outgoing and incoming slides sit at `progress` through the change, in the
+    /// writer and the preview alike: horizontal shift as a fraction of the width (positive is
+    /// right), extra scale, and the incoming slide's opacity.
+    struct Pose: Equatable {
+        var outgoingShift: CGFloat = 0
+        var outgoingScale: CGFloat = 0
+        var incomingShift: CGFloat = 0
+        var incomingScale: CGFloat = 0
+        var incomingOpacity: CGFloat = 1
+    }
+
+    func pose(_ progress: CGFloat) -> Pose {
+        let e = eased(progress)
+        switch self {
+        case .fade, .cut: return Pose(incomingOpacity: e)
+        case .slide: return Pose(outgoingShift: -e, incomingShift: 1 - e)
+        case .zoom: return Pose(outgoingScale: 0.06 * e, incomingScale: 0.12 * (1 - e), incomingOpacity: e)
+        }
+    }
+}
+
 enum SlideshowWriter {
     struct Options: Equatable {
         var secondsPerPhoto: Double = 2.5
         var fadeSeconds: Double = 0.4
         var slowZoom = true
+        var transition: SlideTransition = .fade
     }
 
     enum Failure: Error { case setup, missingSlide(Int), write }
@@ -208,7 +258,10 @@ enum SlideshowWriter {
 
         init(slides: Int, options: Options, fps: Int32 = SlideshowWriter.fps) {
             framesPerSlide = max(1, Int((options.secondsPerPhoto * Double(fps)).rounded()))
-            fadeFrames = slides > 1 ? min(Int((options.fadeSeconds * Double(fps)).rounded()), framesPerSlide / 2) : 0
+            // A slide needs a little longer than a fade to read as movement.
+            let seconds = options.transition == .slide ? max(options.fadeSeconds, 0.5) : options.fadeSeconds
+            fadeFrames = slides > 1 && options.transition != .cut
+                ? min(Int((seconds * Double(fps)).rounded()), framesPerSlide / 2) : 0
             totalFrames = framesPerSlide * max(0, slides)
         }
 
@@ -311,7 +364,8 @@ enum SlideshowWriter {
                     options.slowZoom ? zoomAmount * timing.zoomProgress(slide: slide, frame: frame) : 0
                 }
                 composer.render(current: current, currentGrow: grow(index),
-                                next: next, nextGrow: next == nil ? 0 : grow(index + 1), fade: fade, into: buffer)
+                                next: next, nextGrow: next == nil ? 0 : grow(index + 1), fade: fade,
+                                transition: options.transition, into: buffer)
 
                 guard adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps)) else {
                     throw writer.error ?? Failure.write
@@ -376,33 +430,48 @@ enum SlideshowWriter {
             return sx == 1 && sy == 1 ? ci : ci.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
         }
 
-        private func zoomed(_ image: CIImage, grow: CGFloat) -> CIImage {
-            guard grow > 0 else { return image }
-            let scale = 1 + grow
-            return image.transformed(by: CGAffineTransform(translationX: size.width / 2, y: size.height / 2)
-                .scaledBy(x: scale, y: scale)
-                .translatedBy(x: -size.width / 2, y: -size.height / 2))
+        /// Scaled about the centre by `grow`, then moved across by `shift` widths.
+        private func placed(_ image: CIImage, grow: CGFloat, shift: CGFloat = 0) -> CIImage {
+            var result = image
+            if grow != 0 {
+                let scale = 1 + grow
+                result = result.transformed(by: CGAffineTransform(translationX: size.width / 2, y: size.height / 2)
+                    .scaledBy(x: scale, y: scale)
+                    .translatedBy(x: -size.width / 2, y: -size.height / 2))
+            }
+            if shift != 0 { result = result.transformed(by: CGAffineTransform(translationX: shift * size.width, y: 0)) }
+            return result
         }
 
         func render(current: CIImage, currentGrow: CGFloat, next: CIImage?, nextGrow: CGFloat, fade: CGFloat,
-                    into buffer: CVPixelBuffer) {
-            var frame = zoomed(current, grow: currentGrow)
-            if let next, fade > 0 {
-                let top = zoomed(next, grow: nextGrow)
-                    .applyingFilter("CIColorMatrix", parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: fade)])
+                    transition: SlideTransition = .fade, into buffer: CVPixelBuffer) {
+            let pose = transition.pose(fade)
+            let changing = next != nil && fade > 0
+            var frame = placed(current, grow: currentGrow + (changing ? pose.outgoingScale : 0),
+                               shift: changing ? pose.outgoingShift : 0)
+            if let next, changing {
+                var top = placed(next, grow: nextGrow + pose.incomingScale, shift: pose.incomingShift)
+                if pose.incomingOpacity < 1 {
+                    top = top.applyingFilter("CIColorMatrix",
+                                             parameters: ["inputAVector": CIVector(x: 0, y: 0, z: 0, w: pose.incomingOpacity)])
+                }
                 frame = top.composited(over: frame)
             }
             let canvas = CGRect(origin: .zero, size: size)
-            context.render(frame.cropped(to: canvas), to: buffer, bounds: canvas, colorSpace: colorSpace)
+            // Black behind, so a slide never shows stale pixels from a reused buffer.
+            let backed = frame.composited(over: CIImage(color: .black).cropped(to: canvas))
+            context.render(backed.cropped(to: canvas), to: buffer, bounds: canvas, colorSpace: colorSpace)
         }
 
         /// One frame as a CGImage, for checking the composer against the old drawing.
-        func image(current: CIImage, currentGrow: CGFloat, next: CIImage?, nextGrow: CGFloat, fade: CGFloat) -> CGImage? {
+        func image(current: CIImage, currentGrow: CGFloat, next: CIImage?, nextGrow: CGFloat, fade: CGFloat,
+                   transition: SlideTransition = .fade) -> CGImage? {
             var made: CVPixelBuffer?
             CVPixelBufferCreate(nil, Int(size.width), Int(size.height), kCVPixelFormatType_32BGRA,
                                 [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()] as CFDictionary, &made)
             guard let buffer = made else { return nil }
-            render(current: current, currentGrow: currentGrow, next: next, nextGrow: nextGrow, fade: fade, into: buffer)
+            render(current: current, currentGrow: currentGrow, next: next, nextGrow: nextGrow, fade: fade,
+                   transition: transition, into: buffer)
             return context.createCGImage(CIImage(cvPixelBuffer: buffer), from: CGRect(origin: .zero, size: size))
         }
     }

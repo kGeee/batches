@@ -140,4 +140,44 @@ final class SocialExportTests: XCTestCase {
         let none = try XCTUnwrap(composer.image(current: black, currentGrow: 0, next: white, nextGrow: 0, fade: 0))
         XCTAssertLessThan(pixel(none, x: 540, y: 540).r, 5)
     }
+
+    // MARK: Transitions
+
+    func testCutHasNoTransitionFrames() {
+        let timing = SlideshowWriter.Timing(slides: 3, options: .init(secondsPerPhoto: 2.5, transition: .cut))
+        XCTAssertEqual(timing.fadeFrames, 0)
+        XCTAssertEqual(timing.totalFrames, 225, "length is the same whatever the transition")
+    }
+
+    func testPosesStartAndEndOnTheRightSlide() {
+        for transition in SlideTransition.allCases {
+            let start = transition.pose(0), end = transition.pose(1)
+            XCTAssertEqual(end.incomingShift, 0, accuracy: 0.0001, "\(transition) lands centred")
+            XCTAssertEqual(end.incomingScale, 0, accuracy: 0.0001, "\(transition) lands at size")
+            XCTAssertEqual(end.incomingOpacity, 1, accuracy: 0.0001, "\(transition) lands opaque")
+            if transition == .slide {
+                XCTAssertEqual(start.incomingShift, 1, accuracy: 0.0001, "slide starts off the right edge")
+                XCTAssertEqual(end.outgoingShift, -1, accuracy: 0.0001, "slide pushes the last photo off the left")
+            }
+        }
+    }
+
+    func testSlideHalfwayShowsBothSlidesSideBySide() throws {
+        let size = SocialFormat.square.size
+        let composer = SlideshowWriter.FrameComposer(size: size)
+        let red = try XCTUnwrap(composer.upload(twoTone(size, top: .red, bottom: .red)))
+        let blue = try XCTUnwrap(composer.upload(twoTone(size, top: .blue, bottom: .blue)))
+        let half = try XCTUnwrap(composer.image(current: red, currentGrow: 0, next: blue, nextGrow: 0, fade: 0.5, transition: .slide))
+        XCTAssertGreaterThan(pixel(half, x: 200, y: 540).r, 200, "outgoing photo on the left")
+        XCTAssertGreaterThan(pixel(half, x: 880, y: 540).b, 200, "incoming photo on the right")
+    }
+
+    func testEveryTransitionWritesAVideoOfTheSameLength() async throws {
+        for transition in SlideTransition.allCases {
+            let (url, _) = try await writeVideo(slides: 3, options: .init(secondsPerPhoto: 1.5, slowZoom: true, transition: transition))
+            defer { try? FileManager.default.removeItem(at: url) }
+            let duration = try await AVURLAsset(url: url).load(.duration)
+            XCTAssertEqual(duration.seconds, 4.5, accuracy: 0.001, "\(transition)")
+        }
+    }
 }
