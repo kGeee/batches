@@ -63,7 +63,9 @@ struct FullFrameViewer: View {
     /// sits between them instead of under them.
     @State private var topEdge: CGFloat = 0
     @State private var bottomEdge: CGFloat = 0
-    @State private var screenHeight: CGFloat = 0
+    /// Where a page ends, which is the screen's bottom edge: pages run under the safe areas, so
+    /// measuring the screen from an ordinary view would come up short by the home bar and more.
+    @State private var pageBottom: CGFloat = 0
     @State private var removing: Photo?
     @GestureState private var dragging = false
 
@@ -107,7 +109,6 @@ struct FullFrameViewer: View {
     var body: some View {
         ZStack {
             Color.viewerFog.opacity(closing ? 0 : 1 - progress).ignoresSafeArea()
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).height } action: { screenHeight = $0 }
             pages
                 .offset(drag)
                 .scaleEffect(1 - 0.25 * progress)
@@ -168,8 +169,12 @@ struct FullFrameViewer: View {
                     }
                     // Between the bar and the caption while they show; the whole screen once they're tapped away.
                     .padding(.top, chromeHidden ? 0 : topEdge)
-                    .padding(.bottom, chromeHidden ? 0 : max(0, screenHeight - bottomEdge))
+                    .padding(.bottom, chromeHidden ? 0 : max(0, pageBottom - bottomEdge))
                     .containerRelativeFrame([.horizontal, .vertical])
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
+                        // Only the page on screen, at rest: a drag to close moves and shrinks it.
+                        if photo.id == currentID, drag == .zero { pageBottom = bottom }
+                    }
                     .id(photo.id)
                 }
             }
@@ -192,6 +197,9 @@ struct FullFrameViewer: View {
 
     // MARK: Controls
 
+    /// Room under the photo for its caption, the latest comment and who's tagged, all at once.
+    private static let captionArea: CGFloat = 156
+
     private var chrome: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
@@ -210,12 +218,14 @@ struct FullFrameViewer: View {
                     VStack(alignment: .leading, spacing: 10) {
                         if let caption = current.caption {
                             Text(caption).batchTitle(captionFont, .headline, weight: .regular)
-                                .lineLimit(2)
+                                .lineLimit(1)
                                 .padding(.horizontal, 20)
                         }
                         details(current)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 118, maxHeight: 118, alignment: .bottomLeading)
+                    .frame(maxWidth: .infinity, minHeight: Self.captionArea, maxHeight: Self.captionArea, alignment: .bottomLeading)
+                    // Anything that still doesn't fit is cut off here rather than drawn over the photo.
+                    .clipped()
                     actionBar(current)
                 }
             }
@@ -786,7 +796,7 @@ private struct CommentCaption: View {
                     VStack(alignment: .leading, spacing: 6) {
                         MentionText("\u{201C}\(comment.body)\u{201D}")
                             .font(.system(.title3, design: .serif).italic())
-                            .lineLimit(3)
+                            .lineLimit(2)
                             .multilineTextAlignment(.leading)
                         Text(byline(comment)).font(.footnote).foregroundStyle(.secondary)
                     }
@@ -796,7 +806,7 @@ private struct CommentCaption: View {
                                             removal: .modifier(active: Drift(y: reduceMotion ? 0 : -10, blur: reduceMotion ? 0 : 4, opacity: 0),
                                                                identity: Drift())))
                 }
-                .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .topLeading)
             }
             .contentShape(Rectangle())
         }
