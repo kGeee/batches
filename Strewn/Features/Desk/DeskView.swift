@@ -31,9 +31,13 @@ struct DeskView: View {
     @State private var grabOffset: CGSize = .zero
     @State private var dragTranslation: CGSize = .zero
     @State private var dropTargetID: String?
-    /// Set by pulling down at the top of the desk, which opens the followers and filters under
-    /// your name, the way pulling down shows a hidden search field.
-    @State private var pulledOpen = false
+    /// Followers and filters show while the desk moves near the top, then tuck up under your
+    /// name once it's been still for a moment.
+    @State private var barShown = true
+    @State private var barHide: Task<Void, Never>?
+    /// How far the top of the desk is scrolled: 0 at rest, below 0 scrolled down, above 0 pulled.
+    @State private var scrollTop: CGFloat = 0
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var slots: [String: CGRect] = [:]
 
     private static let tileSpace = "deskTiles"
@@ -72,8 +76,8 @@ struct DeskView: View {
     var body: some View {
         ZStack {
             deskSurface
-                .animation(.snappy(duration: 0.32), value: showsRevealBar)
-                .sensoryFeedback(.impact(weight: .light), trigger: pulledOpen) { _, open in open }
+                .onAppear(perform: scheduleBarHide)
+                .onChange(of: filter) { scheduleBarHide() }
                 .background(DeskMatBackground())
                 .refreshable { await model.refresh() }
                 .sheet(isPresented: $showNewPile) { NewPileSheet() }
@@ -155,10 +159,9 @@ struct DeskView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     top.padding(.horizontal, 14)
-                        // Pulled down past the top: open the followers and filters.
-                        .onGeometryChange(for: Bool.self) { $0.frame(in: .named(Self.scrollSpace)).minY > Self.pullToOpen } action: { pulled in
-                            if pulled, !pulledOpen { pulledOpen = true }
-                        }
+                        // Measured on the name, which the bar sits below, so the bar folding away
+                        // doesn't count as the desk moving.
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.scrollSpace)).minY } action: { deskMoved(to: $0) }
                     if tiles.isEmpty {
                         EmptyDesk { showNewPile = true }.padding(.horizontal, 14)
                     } else if shownTiles.isEmpty {
@@ -185,15 +188,37 @@ struct DeskView: View {
     }
 
     private static let scrollSpace = "deskScroll"
-    /// How far past the top a pull goes before it opens them. Well short of pull to refresh, so a
-    /// small tug opens them and a long one also refreshes.
-    private static let pullToOpen: CGFloat = 34
+    /// Within this of the top counts as "at the top".
+    private static let nearTop: CGFloat = 44
+    /// How long the desk sits still before the bar tucks away.
+    private static let barLinger: Duration = .seconds(2)
 
-    /// Followers and filters stay out of the way until you pull down at the top, then stay open.
-    /// They're also out while a filter is on, so you can see the desk is narrowed.
+    /// Whether the bar has a place on the desk at all.
+    private var hasRevealBar: Bool { !model.myCollections.isEmpty && !arranging }
+
+    /// Out while the desk moves near the top, and while a filter is on, so you can see it's narrowed.
     private var showsRevealBar: Bool {
-        guard !model.myCollections.isEmpty, !arranging else { return false }
-        return pulledOpen || filter != .all || layout.mode == .freehand
+        // VoiceOver keeps it: a bar that hides itself is one you can't reach by swiping.
+        barShown || voiceOver || filter != .all || layout.mode == .freehand
+    }
+
+    private func deskMoved(to top: CGFloat) {
+        scrollTop = top
+        if top > -Self.nearTop, !barShown {
+            withAnimation(.snappy(duration: 0.32)) { barShown = true }
+        }
+        scheduleBarHide()
+    }
+
+    /// Tucks the bar under the name once the desk has been still a moment. Only at the top: further
+    /// down it's off screen anyway, and folding it there would jolt the page.
+    private func scheduleBarHide() {
+        barHide?.cancel()
+        barHide = Task {
+            try? await Task.sleep(for: Self.barLinger)
+            guard !Task.isCancelled, scrollTop > -Self.nearTop, barShown else { return }
+            withAnimation(.smooth(duration: 0.5)) { barShown = false }
+        }
     }
 
     private var revealBar: some View {
@@ -224,7 +249,15 @@ struct DeskView: View {
                           onSearch: model.myCollections.isEmpty ? nil : { toggleSearch() }, onAccount: { showAccount = true }) {
                 if !model.myCollections.isEmpty { layoutMenu }
             }
-            if showsRevealBar { revealBar.transition(.move(edge: .top).combined(with: .opacity)) }
+            if hasRevealBar {
+                // Folds up from the bottom, so the bar slides up under the name as if into a slot.
+                revealBar
+                    .frame(height: showsRevealBar ? nil : 0, alignment: .bottom)
+                    .clipped()
+                    .opacity(showsRevealBar ? 1 : 0)
+                    .padding(.top, showsRevealBar ? 0 : -10)   // the stack's spacing goes with it
+                    .accessibilityHidden(!showsRevealBar)
+            }
             if searching { searchField }
             if let news { activityLine(news) }
             if arranging { arrangeBar }
