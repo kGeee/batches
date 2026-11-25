@@ -21,6 +21,7 @@ struct GalleryView: View {
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.tiltedPiles) private var tiltedPiles
     @State private var showFrames = false
+    @State private var showAddPhotos = false
     @State private var showShare = false
     /// Making Instagram and TikTok posts: from the whole batch, or one photo.
     @State private var postingSocial: SocialPosting?
@@ -36,9 +37,6 @@ struct GalleryView: View {
     @State private var arrangingBoard = false
     @State private var reporting: ReportTarget?
     @State private var confirmingBlock = false
-    @State private var picked: [PhotosPickerItem] = []
-    @State private var importing = false
-    @State private var google = GooglePhotosPicking()
     @State private var removing: Photo?
     @State private var viewerPhoto: Photo?
     @State private var editingPhoto: Photo?
@@ -98,11 +96,7 @@ struct GalleryView: View {
                     .offset(y: headerPull * 0.9)
                 }
                 if showsDock {
-                    VStack(spacing: 10) {
-                        GooglePhotosStatus(picking: google).padding(.horizontal, 16)
-                        dock
-                    }
-                    .animation(.snappy, value: google.stage)
+                    dock
                         .opacity(appeared ? 1 - pullProgress : 0)
                         .frame(maxHeight: .infinity, alignment: .bottom)
                 }
@@ -122,6 +116,15 @@ struct GalleryView: View {
         .sensoryFeedback(.selection, trigger: collection.coverPhotoID)
         .sensoryFeedback(.impact(weight: .light), trigger: pullDistance > PullToDismiss.threshold) { _, past in past }
         .accessibilityAction(.escape, close)   // VoiceOver's two-finger scrub
+        .sheet(isPresented: $showAddPhotos) {
+            AddPhotosSheet(collection: collection) { photos in
+                if isOwner {
+                    withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
+                } else {
+                    await model.contribute(photos, to: collection.id)
+                }
+            }
+        }
         .sheet(isPresented: $showFrames) {
             FramePickerSheet(frame: Binding(get: { collection.frame }, set: { model.setFrame($0, for: collection.id) }),
                              boardOn: Binding(get: { collection.board?.isOn == true }, set: { model.setBoardOn($0, for: collection.id) }),
@@ -208,21 +211,6 @@ struct GalleryView: View {
                 Text("It leaves the batch for everyone. \(adder.displayName) still has the original.")
             } else {
                 Text("It stays in your Photos library and on this phone.")
-            }
-        }
-        .googlePhotosAlert(google)
-        .onChange(of: picked) { _, items in
-            guard !items.isEmpty else { return }
-            importing = true
-            Task {
-                let photos = await PhotoImport.photos(from: items, collectionID: collection.id)
-                if isOwner {
-                    withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
-                } else {
-                    await model.contribute(photos, to: collection.id)
-                }
-                picked = []
-                importing = false
             }
         }
         .fullScreenCover(item: $editingPhoto) { photo in
@@ -518,28 +506,14 @@ struct GalleryView: View {
         .accessibilityHidden(true)
     }
 
-    private func importFromGoogle() {
-        Task {
-            let photos = await google.run(collectionID: collection.id)
-            guard !photos.isEmpty else { return }
-            importing = true
-            if isOwner {
-                withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
-            } else {
-                await model.contribute(photos, to: collection.id)
-            }
-            importing = false
-        }
-    }
-
     /// What you do to the batch, in one dark pill: Add photos first, then the tools by name.
     /// A friend who can add photos gets just that.
     private var dock: some View {
         HStack(spacing: 0) {
-            PhotoSourcePicker(selection: $picked, onGooglePhotos: importFromGoogle) {
+            // Opens the same suggestions as New batch, starting with what's from around this batch.
+            Button { showAddPhotos = true } label: {
                 HStack(spacing: 6) {
-                    if importing || google.isRunning { ProgressView().tint(Color.mat).controlSize(.small) }
-                    else { Image(systemName: "plus").font(.subheadline.weight(.medium)) }
+                    Image(systemName: "plus").font(.subheadline.weight(.medium))
                     Text("Add photos").font(.subheadline.weight(.medium)).lineLimit(1)
                 }
                 .fixedSize()
@@ -547,7 +521,7 @@ struct GalleryView: View {
                 .frame(minHeight: 46)
                 .contentShape(Rectangle())
             }
-            .disabled(importing || google.isRunning)
+            .buttonStyle(.plain)
             if isOwner {
                 dockButton("Frames") { showFrames = true }
                 if frame.kind != .filmStrip {

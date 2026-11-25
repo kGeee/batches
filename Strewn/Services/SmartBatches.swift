@@ -314,6 +314,32 @@ final class SmartBatchSuggestions {
         return items
     }
 
+    /// Photos from the library taken around a batch you already have, and not in any of your
+    /// batches yet: the rest of that day (or those days), half a day either side. nil without
+    /// library access, when the batch has no dates, or when there's nothing new.
+    nonisolated static func around(_ collection: PhotoCollection, excluding batched: Set<String>) async -> SmartBatch? {
+        guard currentAccess() == .full || currentAccess() == .limited else { return nil }
+        let dates = collection.photos.compactMap(\.capturedAt)
+        guard let first = dates.min() ?? collection.shotOn, let last = dates.max() ?? collection.shotOn else { return nil }
+        let margin: TimeInterval = 12 * 60 * 60
+        let from = first.addingTimeInterval(-margin), to = last.addingTimeInterval(margin)
+        let items = await Task.detached(priority: .userInitiated) {
+            libraryItems(since: from, excluding: batched).filter { $0.date <= to && !$0.isBatched }
+        }.value
+        guard let start = items.first?.date, let end = items.last?.date else { return nil }
+        let spot = SmartBatchGrouping.busiestSpot(items.compactMap(\.coordinate))
+        return SmartBatch(id: "around-\(collection.id)", assetIDs: items.map(\.id), start: start, end: end,
+                          latitude: spot?.lat, longitude: spot?.lon, isTrip: false)
+    }
+
+    /// For adding to a batch you have: leaves out suggestions that share photos with `aside`
+    /// (they're already offered), and puts the ones nearest `date` first.
+    func focus(on date: Date, setAside aside: Set<String>) {
+        batches = batches
+            .filter { aside.isDisjoint(with: $0.assetIDs) }
+            .sorted { abs($0.start.timeIntervalSince(date)) < abs($1.start.timeIntervalSince(date)) }
+    }
+
     /// Asks for a place name for a batch once, when its card comes on screen. Reverse
     /// geocoding goes over the network and is rate limited, so requests wait in one queue and a
     /// single loop works through it, one lookup at a time. A lookup that fails isn't retried
