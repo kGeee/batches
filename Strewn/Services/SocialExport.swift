@@ -128,31 +128,59 @@ final class SocialRenderer: @unchecked Sendable {
     let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     static let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
 
-    /// One post: the photo on its fill, at the format's exact size times `scale` (below 1 for a
-    /// quick preview that looks the same, just smaller).
-    func render(_ photo: CGImage, format: SocialFormat, fill: SocialFill, background: CGColor, scale: CGFloat = 1) -> CGImage? {
+    /// One post: the photo on its fill (or laid out by its branding), at the format's exact size
+    /// times `scale` (below 1 for a quick preview that looks the same, just smaller).
+    func render(_ photo: CGImage, format: SocialFormat, fill: SocialFill, background: CGColor, scale: CGFloat = 1,
+                branding: SocialBranding = .none, caption: SocialCaption? = nil) -> CGImage? {
         let canvas = CGSize(width: (format.size.width * scale).rounded(), height: (format.size.height * scale).rounded())
-        guard let context = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8,
-                                      bytesPerRow: 0, space: colorSpace, bitmapInfo: Self.bitmapInfo) else { return nil }
-        context.interpolationQuality = .high
-        let whole = CGRect(origin: .zero, size: canvas)
-        switch fill {
-        case .background:
-            context.setFillColor(background)
-            context.fill(whole)
-        case .blur:
-            if let backdrop = blurredBackdrop(photo, canvas: canvas, scale: scale) {
-                context.draw(backdrop, in: whole)
-            } else {
-                context.setFillColor(background)
-                context.fill(whole)
+        let k = canvas.width / 360
+        let source = UIImage(cgImage: photo)
+        let caption = caption ?? SocialCaption(title: "")
+        let backdrop = branding.usesFill && fill == .blur ? blurredBackdrop(photo, canvas: canvas, scale: scale) : nil
+        return Self.draw(canvas) { _ in
+            switch branding {
+            case .print:
+                BrandDrawing.printPost(source, caption: caption, canvas: canvas, k: k)
+            case .film:
+                BrandDrawing.filmPost(source, caption: caption, canvas: canvas, k: k)
+            case .corner, .none:
+                let whole = CGRect(origin: .zero, size: canvas)
+                switch fill {
+                case .background:
+                    UIColor(cgColor: background).setFill()
+                    UIRectFill(whole)
+                case .blur:
+                    if let backdrop {
+                        UIImage(cgImage: backdrop).draw(in: whole)
+                    } else {
+                        UIColor(cgColor: background).setFill()
+                        UIRectFill(whole)
+                    }
+                case .crop:
+                    UIColor.black.setFill()
+                    UIRectFill(whole)
+                }
+                source.draw(in: SocialLayout.placement(of: CGSize(width: photo.width, height: photo.height), in: canvas, fill: fill))
+                if branding == .corner { BrandDrawing.corner(canvas: canvas, k: k) }
             }
-        case .crop:
-            break
         }
-        // The placement is centred, so Core Graphics' bottom-left origin doesn't move it.
-        context.draw(photo, in: SocialLayout.placement(of: CGSize(width: photo.width, height: photo.height), in: canvas, fill: fill))
-        return context.makeImage()
+    }
+
+    /// A video's closing card, the size of its posts.
+    func endCard(prints: [CGImage], caption: SocialCaption, format: SocialFormat, scale: CGFloat = 1) -> CGImage? {
+        let canvas = CGSize(width: (format.size.width * scale).rounded(), height: (format.size.height * scale).rounded())
+        return Self.draw(canvas) { _ in
+            BrandDrawing.endCard(prints: prints.map { UIImage(cgImage: $0) }, caption: caption, canvas: canvas)
+        }
+    }
+
+    /// An opaque sRGB bitmap of exactly `size` pixels, drawn with UIKit (origin top-left).
+    private static func draw(_ size: CGSize, _ body: (UIGraphicsImageRendererContext) -> Void) -> CGImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        format.preferredRange = .standard
+        return UIGraphicsImageRenderer(size: size, format: format).image(actions: body).cgImage
     }
 
     /// The photo scaled to cover the post, blurred and dimmed a touch so the sharp copy stands out.
@@ -508,20 +536,55 @@ enum SocialExport {
         return image?.cgImage
     }
 
-    static func post(_ photo: Photo, format: SocialFormat, fill: SocialFill, background: CGColor, scale: CGFloat = 1) async -> CGImage? {
-        guard let source = await source(photo, format: format, fill: fill, scale: scale) else { return nil }
-        return SocialRenderer.shared.render(source, format: format, fill: fill, background: background, scale: scale)
+    /// Everything about a post's look besides its photo.
+    struct Look: Equatable {
+        var format: SocialFormat
+        var fill: SocialFill
+        var branding: SocialBranding
+        var background: CGColor
+        var title: String
+    }
+
+    static func post(_ photo: Photo, format: SocialFormat, fill: SocialFill, background: CGColor, scale: CGFloat = 1,
+                     branding: SocialBranding = .none, caption: SocialCaption? = nil) async -> CGImage? {
+        // Print and Film lay the photo out smaller than a fit would; decode for a fit anyway,
+        // which is always at least as big.
+        let decodeFill: SocialFill = branding.usesFill ? fill : .blur
+        guard let source = await source(photo, format: format, fill: decodeFill, scale: scale) else { return nil }
+        return SocialRenderer.shared.render(source, format: format, fill: fill, background: background, scale: scale,
+                                            branding: branding, caption: caption)
+    }
+
+    static func post(_ photo: Photo, look: Look, index: Int, of total: Int, scale: CGFloat = 1) async -> CGImage? {
+        await post(photo, format: look.format, fill: look.fill, background: look.background, scale: scale,
+                   branding: look.branding, caption: SocialCaption(title: look.title, date: photo.capturedAt, index: index + 1, total: total))
+    }
+
+    /// The video's closing card, with up to three of its photos as a pile.
+    static func endCard(_ photos: [Photo], look: Look, scale: CGFloat = 1) async -> CGImage? {
+        let picks = photos.count <= 3 ? photos : [photos[photos.count / 3], photos[(photos.count * 2) / 3], photos[0]]
+        var prints: [CGImage] = []
+        for photo in picks {
+            let needed = Int((440 * scale).rounded(.up))
+            if let image = await PhotoImageLoader.shared.image(for: photo.source(for: .l),
+                                                               maxPixelSide: PhotoImageLoader.bucket(for: CGFloat(needed)))?.cgImage {
+                prints.append(image)
+            }
+        }
+        let date = photos.compactMap(\.capturedAt).min()
+        return SocialRenderer.shared.endCard(prints: prints, caption: SocialCaption(title: look.title, date: date, total: photos.count),
+                                             format: look.format, scale: scale)
     }
 
     /// One JPEG per photo, in batch order, named so they sort that way in Files and the share sheet.
-    static func images(_ photos: [Photo], name: String, format: SocialFormat, fill: SocialFill, background: CGColor,
+    static func images(_ photos: [Photo], name: String, look: Look,
                        progress: @escaping @MainActor (Double) -> Void) async throws -> [URL] {
         guard !photos.isEmpty else { throw Failure.noPhotos }
         let folder = try freshFolder()
         var files: [URL] = []
         for (index, photo) in photos.enumerated() {
             try Task.checkCancellation()
-            guard let post = await post(photo, format: format, fill: fill, background: background) else { throw Failure.unreadable }
+            guard let post = await post(photo, look: look, index: index, of: photos.count) else { throw Failure.unreadable }
             guard let data = SocialRenderer.jpeg(post) else { throw Failure.encode }
             let suffix = photos.count > 1 ? "-\(index + 1)" : ""
             let url = folder.appending(path: "\(fileStem(name))\(suffix).jpg")
@@ -532,13 +595,19 @@ enum SocialExport {
         return files
     }
 
-    static func video(_ photos: [Photo], name: String, format: SocialFormat, fill: SocialFill, background: CGColor,
+    /// With `endCard`, the video closes on a Batches card after the last photo.
+    static func video(_ photos: [Photo], name: String, look: Look, endCard: Bool,
                       options: SlideshowWriter.Options, progress: @escaping @MainActor (Double) -> Void) async throws -> URL {
         guard !photos.isEmpty else { throw Failure.noPhotos }
         let url = try freshFolder().appending(path: "\(fileStem(name)).mp4")
+        let count = photos.count + (endCard ? 1 : 0)
         do {
-            try await SlideshowWriter.write(count: photos.count, size: format.size, options: options, to: url,
-                                            slide: { await post(photos[$0], format: format, fill: fill, background: background) },
+            try await SlideshowWriter.write(count: count, size: look.format.size, options: options, to: url,
+                                            slide: { index in
+                                                index < photos.count
+                                                    ? await post(photos[index], look: look, index: index, of: photos.count)
+                                                    : await Self.endCard(photos, look: look)
+                                            },
                                             progress: progress)
         } catch SlideshowWriter.Failure.missingSlide {
             throw Failure.unreadable

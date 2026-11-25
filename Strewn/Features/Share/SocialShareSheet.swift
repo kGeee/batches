@@ -16,6 +16,9 @@ struct SocialShareSheet: View {
     @State private var output = SocialOutput.images
     @State private var format = SocialFormat.portrait
     @State private var fill = SocialFill.blur
+    @State private var branding = SocialBranding.corner
+    /// Videos close on a Batches card.
+    @State private var endCard = true
     @State private var chosen: [UUID] = []
     @State private var secondsPerPhoto = 2.5
     @State private var slowZoom = true
@@ -35,6 +38,9 @@ struct SocialShareSheet: View {
         return photos.filter { chosen.contains($0.id) }
     }
     private var background: CGColor { collection.backdrop.postColor }
+    private var look: SocialExport.Look {
+        SocialExport.Look(format: format, fill: fill, branding: branding, background: background, title: collection.title)
+    }
 
     var body: some View {
         PaperSheet(title: single == nil ? "Post this batch" : "Post this photo", onCancel: cancel,
@@ -60,13 +66,27 @@ struct SocialShareSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                PaperLabel("Around the photo").padding(.horizontal, 4)
-                Picker("Around the photo", selection: $fill) {
-                    ForEach(SocialFill.allCases) { Text($0.title).tag($0) }
+                PaperLabel("Batches mark").padding(.horizontal, 4)
+                Picker("Batches mark", selection: $branding.animation(.snappy)) {
+                    ForEach(SocialBranding.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Text(fillNote).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
+                Text(branding.note).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Print and Film lay out the whole post, so there's no fill to choose.
+            if branding.usesFill {
+                VStack(alignment: .leading, spacing: 8) {
+                    PaperLabel("Around the photo").padding(.horizontal, 4)
+                    Picker("Around the photo", selection: $fill) {
+                        ForEach(SocialFill.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    Text(fillNote).font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .transition(.opacity)
             }
 
             if output == .video {
@@ -91,6 +111,8 @@ struct SocialShareSheet: View {
                     }
                     PaperDivider()
                     PaperRow { Toggle("Slow zoom", isOn: $slowZoom).tint(.strewnAccent) }
+                    PaperDivider()
+                    PaperRow { Toggle("End on a Batches card", isOn: $endCard).tint(.strewnAccent) }
                 }
             }
 
@@ -111,8 +133,11 @@ struct SocialShareSheet: View {
             if now == .video { format = .vertical }
             if chosen.count > limit { chosen = Array(chosen.prefix(limit)) }
         }
-        .task(id: PreviewKey(photo: picked.first?.id, format: format, fill: fill)) { await renderPreview() }
-        .task(id: VideoPreviewKey(photos: output == .video ? picked.map(\.id) : [], format: format, fill: fill)) {
+        .task(id: PreviewKey(photo: picked.first?.id, count: picked.count, format: format, fill: fill, branding: branding)) {
+            await renderPreview()
+        }
+        .task(id: VideoPreviewKey(photos: output == .video ? picked.map(\.id) : [], format: format, fill: fill,
+                                  branding: branding, endCard: endCard)) {
             await renderVideoPreview()
         }
         .onDisappear { working?.cancel() }
@@ -170,7 +195,7 @@ struct SocialShareSheet: View {
 
     private func renderPreview() async {
         guard let photo = picked.first else { preview = nil; return }
-        let rendered = await SocialExport.post(photo, format: format, fill: fill, background: background)
+        let rendered = await SocialExport.post(photo, look: look, index: 0, of: picked.count)
         guard !Task.isCancelled else { return }
         preview = rendered.map { UIImage(cgImage: $0) }
     }
@@ -181,20 +206,27 @@ struct SocialShareSheet: View {
     private func renderVideoPreview() async {
         let photos = picked
         guard output == .video, !photos.isEmpty else { previewSlides = []; return }
-        let format = format, fill = fill, background = background
-        let key = "\(format.rawValue)-\(fill.rawValue)"
-        var slides: [UIImage?] = photos.map { previewCache["\(key)-\($0.id)"] }
+        let look = look, withEnd = endCard
+        // Print and Film number each photo, so their slides depend on position too.
+        func key(_ index: Int) -> String {
+            let base = "\(look.format.rawValue)-\(look.fill.rawValue)-\(look.branding.rawValue)"
+            if index == photos.count { return "\(base)-end-\(photos.map(\.id.uuidString).joined())" }
+            return "\(base)-\(index)-\(photos.count)-\(photos[index].id)"
+        }
+        let count = photos.count + (withEnd ? 1 : 0)
+        var slides: [UIImage?] = (0..<count).map { previewCache[key($0)] }
         previewSlides = slides
         await withTaskGroup(of: (Int, UIImage?).self) { group in
             var next = 0
             func addNext() {
-                while next < photos.count, slides[next] != nil { next += 1 }
-                guard next < photos.count else { return }
-                let index = next, photo = photos[index]
+                while next < count, slides[next] != nil { next += 1 }
+                guard next < count else { return }
+                let index = next
                 next += 1
                 group.addTask {
-                    let image = await SocialExport.post(photo, format: format, fill: fill, background: background,
-                                                        scale: Self.previewScale)
+                    let image = index < photos.count
+                        ? await SocialExport.post(photos[index], look: look, index: index, of: photos.count, scale: Self.previewScale)
+                        : await SocialExport.endCard(photos, look: look, scale: Self.previewScale)
                     return (index, image.map { UIImage(cgImage: $0) })
                 }
             }
@@ -202,7 +234,7 @@ struct SocialShareSheet: View {
             for await (index, image) in group {
                 guard !Task.isCancelled else { group.cancelAll(); return }
                 slides[index] = image
-                if let image { previewCache["\(key)-\(photos[index].id)"] = image }
+                if let image { previewCache[key(index)] = image }
                 previewSlides = slides
                 addNext()
             }
@@ -285,7 +317,7 @@ struct SocialShareSheet: View {
     }
 
     private var videoNote: String {
-        let seconds = Double(picked.count) * secondsPerPhoto
+        let seconds = Double(picked.count + (endCard ? 1 : 0)) * secondsPerPhoto
         let length = seconds < 60 ? "\(Int(seconds.rounded())) seconds" : String(format: "%.1f minutes", seconds / 60)
         return "About \(length), with no sound, so you can add music in Instagram or TikTok."
     }
@@ -302,7 +334,7 @@ struct SocialShareSheet: View {
         guard !photos.isEmpty else { return }
         failure = nil
         progress = 0
-        let format = format, fill = fill, background = background, title = collection.title
+        let look = look, title = collection.title, withEnd = endCard
         let options = videoOptions
         // A video was asked for, so make one even if only one photo is left ticked.
         let video = output == .video
@@ -311,11 +343,10 @@ struct SocialShareSheet: View {
             do {
                 let files: [URL]
                 if video {
-                    files = [try await SocialExport.video(photos, name: title, format: format, fill: fill, background: background,
+                    files = [try await SocialExport.video(photos, name: title, look: look, endCard: withEnd,
                                                           options: options) { progress = $0 }]
                 } else {
-                    files = try await SocialExport.images(photos, name: title, format: format, fill: fill,
-                                                          background: background) { progress = $0 }
+                    files = try await SocialExport.images(photos, name: title, look: look) { progress = $0 }
                 }
                 guard !Task.isCancelled else { return }
                 LinkShareSheet.present(items: files)
@@ -330,12 +361,16 @@ struct SocialShareSheet: View {
         let photos: [UUID]
         let format: SocialFormat
         let fill: SocialFill
+        let branding: SocialBranding
+        let endCard: Bool
     }
 
     private struct PreviewKey: Hashable {
         let photo: UUID?
+        let count: Int
         let format: SocialFormat
         let fill: SocialFill
+        let branding: SocialBranding
     }
 }
 
