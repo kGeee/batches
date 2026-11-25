@@ -40,7 +40,7 @@ struct NewPileSheet: View {
         VStack(spacing: 0) {
             PaperHeader(title: "New batch", onCancel: { dismiss() })
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     SuggestedBatchesRow(suggestions: suggestions, frame: frame) { reviewing = $0 }
                     VStack(spacing: 12) {
                         picker
@@ -207,7 +207,7 @@ struct NewPileSheet: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 280)
+            .frame(height: previews.isEmpty ? 190 : 280)
             .overlay(alignment: .bottomTrailing) {
                 if pickedCount > 0 {
                     Text("\(pickedCount) \(pickedCount == 1 ? "photo" : "photos") · change")

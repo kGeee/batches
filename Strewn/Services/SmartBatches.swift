@@ -21,6 +21,13 @@ struct SmartBatch: Identifiable, Hashable {
 
     var count: Int { assetIDs.count }
 
+    /// Calendar days from the first photo to the last, counting both.
+    var dayCount: Int {
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: start), to: calendar.startOfDay(for: end)).day ?? 0
+        return days + 1
+    }
+
     var location: CLLocation? {
         guard let latitude, let longitude else { return nil }
         return CLLocation(latitude: latitude, longitude: longitude)
@@ -278,8 +285,10 @@ final class SmartBatchSuggestions {
         isLoading = true
         defer { isLoading = false; hasLoaded = true }
         let since = Calendar.current.date(byAdding: .month, value: -Self.lookBackMonths, to: .now) ?? .distantPast
+        let hidden = Self.hiddenIDs
         batches = await Task.detached(priority: .userInitiated) {
             SmartBatchGrouping.batches(from: Self.libraryItems(since: since, excluding: batched))
+                .filter { !hidden.contains($0.id) }
         }.value
     }
 
@@ -341,6 +350,20 @@ final class SmartBatchSuggestions {
             ? (placemark.locality ?? placemark.administrativeArea ?? placemark.name)
             : (placemark.locality ?? placemark.name ?? placemark.administrativeArea)
         if let name, !name.isEmpty { places[batch.id] = name } else { unnamable.insert(batch.id) }
+    }
+
+    /// Suggestions you've hidden, by id (the first photo's asset id), kept on this phone.
+    private static let hiddenKey = "hiddenSmartBatches"
+    nonisolated static var hiddenIDs: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: hiddenKey) ?? [])
+    }
+
+    /// Drops a suggestion and keeps it from coming back.
+    func hide(_ batch: SmartBatch) {
+        var hidden = Self.hiddenIDs
+        hidden.insert(batch.id)
+        UserDefaults.standard.set(Array(hidden), forKey: Self.hiddenKey)
+        batches.removeAll { $0.id == batch.id }
     }
 
     func assets(for batch: SmartBatch) -> [PHAsset] {
