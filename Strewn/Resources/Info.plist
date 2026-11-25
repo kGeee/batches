@@ -16,7 +16,9 @@
     <key>ITSAppUsesNonExemptEncryption</key><false/>
     <key>NSCameraUsageDescription</key><string>Batches uses the camera to shoot RAW photos with your chosen film look.</string>
     <key>NSPhotoLibraryAddUsageDescription</key><string>Batches saves your developed photos and their RAW originals to your library.</string>
-    <key>NSPhotoLibraryUsageDescription</key><string>Batches lets you pick photos for a batch.</string>
+    <key>NSPhotoLibraryUsageDescription</key><string>Batches suggests batches from when and where your photos were taken, and saves your edits back to your photos. Suggestions are made on your phone, and nothing is uploaded until you make a batch.</string>
+    <!-- Suggestions offer "Choose more" for a limited library, so iOS needn't ask again on every launch. -->
+    <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key><true/>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

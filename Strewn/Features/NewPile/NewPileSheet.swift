@@ -4,13 +4,25 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Start a pile from the Photos library with the system picker. The chosen photos sit on the
-/// linen as a loose stack in the frame you pick, so you see the pile before you make it.
+/// Start a pile from the Photos library: from a suggested day or trip, or with the system
+/// picker. The chosen photos sit on the linen as a loose stack in the frame you pick, so you
+/// see the pile before you make it.
 struct NewPileSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var selection: [PhotosPickerItem] = []
+    /// Photos taken from a suggested batch. Picking with the system picker replaces them.
+    @State private var suggestedPicked: [PHAsset] = []
+    @State private var suggestions = SmartBatchSuggestions()
+    @State private var reviewing: SmartBatch?
+    /// Filled in from a suggestion's place name, and editable.
+    @State private var place = ""
+    /// The name a suggestion filled in, so a later pick only replaces a name you didn't type.
+    @State private var suggestedTitle: String?
+    /// The suggestion the picks came from, so its place name can fill in when it arrives late.
+    @State private var suggestedBatch: SmartBatch?
     /// Picks already downloaded from Google Photos, ready to go with the library picks.
     @State private var googlePicked: [Photo] = []
     @State private var google = GooglePhotosPicking()
@@ -18,13 +30,18 @@ struct NewPileSheet: View {
     @State private var title = ""
     @State private var frame = FrameStyle()
     @State private var isImporting = false
+    @State private var importProgress: (done: Int, total: Int)?
+    @State private var importFailure: String?
+    /// The batch was made with some photos missing; close once the note is read.
+    @State private var dismissAfterNote = false
     @FocusState private var naming: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             PaperHeader(title: "New batch", onCancel: { dismiss() })
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
+                    SuggestedBatchesRow(suggestions: suggestions, frame: frame) { reviewing = $0 }
                     VStack(spacing: 12) {
                         picker
                         if GooglePhotos.isConfigured { googleButton }
@@ -37,6 +54,16 @@ struct NewPileSheet: View {
                             .submitLabel(.done)
                             .padding(.vertical, 6)
                             .overlay(alignment: .bottom) { Rectangle().fill(.primary.opacity(naming ? 0.5 : 0.18)).frame(height: 1) }
+                    }
+                    if !suggestedPicked.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            label("Place")
+                            TextField("Where it was", text: $place)
+                                .font(.system(.body, design: .serif))
+                                .submitLabel(.done)
+                                .padding(.vertical, 6)
+                                .overlay(alignment: .bottom) { Rectangle().fill(.primary.opacity(0.18)).frame(height: 1) }
+                        }
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         label("Frame")
@@ -58,17 +85,69 @@ struct NewPileSheet: View {
         }
         .background(DeskMatBackground())
         .tint(.strewnAccent)
-        .task(id: PreviewKey(library: selection, google: googlePicked.map(\.id))) { await loadPreviews() }
+        .task(id: PreviewKey(library: selection, suggested: suggestedPicked.map(\.localIdentifier), google: googlePicked.map(\.id))) {
+            await loadPreviews()
+        }
+        .task { await suggestions.load(excluding: model.batchedAssetIDs) }
+        .onDisappear { suggestions.stopNaming() }
+        .onChange(of: scenePhase) { _, phase in
+            // Back from Settings (say, after "Allow all"): pick up the new access.
+            if phase == .active, SmartBatchSuggestions.currentAccess() != suggestions.access {
+                Task { await suggestions.load(excluding: model.batchedAssetIDs) }
+            }
+        }
+        .onChange(of: suggestions.places) { _, places in
+            // The place arrived after "Use these": fill it in unless you've written your own.
+            guard let batch = suggestedBatch, let name = places[batch.id], place.isEmpty else { return }
+            place = name
+            let newTitle = batch.suggestedTitle(place: name)
+            if title.isEmpty || title == suggestedTitle { title = newTitle }
+            suggestedTitle = newTitle
+        }
+        .alert(dismissAfterNote ? "Some photos were left out" : "Couldn't make the batch",
+               isPresented: Binding(get: { importFailure != nil }, set: { if !$0 { importFailure = nil } })) {
+            Button("OK", role: .cancel) { if dismissAfterNote { dismiss() } }
+        } message: {
+            Text(importFailure ?? "")
+        }
+        .onChange(of: selection) { _, picks in
+            // The system picker takes over from a suggestion.
+            if !picks.isEmpty, !suggestedPicked.isEmpty { useSuggestion([], from: nil) }
+        }
+        .sheet(item: $reviewing) { batch in
+            SmartBatchReviewView(batch: batch, place: suggestions.places[batch.id],
+                                 limit: max(1, Self.maxPhotos - googlePicked.count)) { assets in
+                useSuggestion(assets, from: batch)
+            }
+        }
         .googlePhotosAlert(google)
         .animation(.snappy, value: google.stage)
     }
 
     private struct PreviewKey: Equatable {
         let library: [PhotosPickerItem]
+        let suggested: [String]
         let google: [UUID]
     }
 
-    private var pickedCount: Int { selection.count + googlePicked.count }
+    private var pickedCount: Int { selection.count + suggestedPicked.count + googlePicked.count }
+    static let maxPhotos = 60
+    /// Room left for Google Photos picks: they replace earlier Google picks, so those don't count.
+    private var googleRoom: Int { Self.maxPhotos - selection.count - suggestedPicked.count }
+
+    /// Puts a suggestion's photos on the stack in place of system picks, and fills in its name
+    /// and place unless you've typed your own name.
+    private func useSuggestion(_ assets: [PHAsset], from batch: SmartBatch?) {
+        // Keep the batch within 60 with whatever came from Google Photos.
+        suggestedPicked = Array(assets.prefix(max(0, Self.maxPhotos - googlePicked.count)))
+        suggestedBatch = assets.isEmpty ? nil : batch
+        if !assets.isEmpty { selection = [] }
+        let name = batch.flatMap { suggestions.places[$0.id] }
+        let newTitle = batch?.suggestedTitle(place: name)
+        if title.isEmpty || title == suggestedTitle { title = newTitle ?? "" }
+        suggestedTitle = newTitle
+        place = name ?? ""
+    }
 
     /// Adds picks from Google Photos to the stack; the system picker stays the big target above.
     @ViewBuilder private var googleButton: some View {
@@ -77,13 +156,15 @@ struct NewPileSheet: View {
         } else {
             Button {
                 Task {
-                    let photos = await google.run(collectionID: UUID(), maxCount: max(1, 60 - selection.count))
+                    let photos = await google.run(collectionID: UUID(), maxCount: googleRoom)
                     if !photos.isEmpty { googlePicked = photos }
                 }
             } label: {
                 HStack(spacing: 8) {
                     GooglePhotosMark(size: 17)
-                    Text(googlePicked.isEmpty ? "From Google Photos" : "\(googlePicked.count) from Google Photos · change")
+                    Text(googlePicked.isEmpty
+                         ? (googleRoom > 0 ? "From Google Photos" : "Batch is full (60)")
+                         : "\(googlePicked.count) from Google Photos · change")
                         .font(.subheadline.weight(.semibold))
                 }
                 .foregroundStyle(.primary)
@@ -93,13 +174,13 @@ struct NewPileSheet: View {
                 .overlay(Capsule().strokeBorder(.foreground.opacity(0.12), lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .disabled(isImporting)
+            .disabled(isImporting || (googlePicked.isEmpty && googleRoom <= 0))
         }
     }
 
     /// The stack of chosen prints, which is also the button that opens the picker.
     private var picker: some View {
-        PhotosPicker(selection: $selection, maxSelectionCount: 60, matching: .images,
+        PhotosPicker(selection: $selection, maxSelectionCount: max(1, Self.maxPhotos - googlePicked.count), matching: .images,
                      preferredItemEncoding: .current, photoLibrary: .shared()) {
             ZStack {
                 if previews.isEmpty {
@@ -126,7 +207,7 @@ struct NewPileSheet: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 280)
+            .frame(height: previews.isEmpty ? 190 : 280)
             .overlay(alignment: .bottomTrailing) {
                 if pickedCount > 0 {
                     Text("\(pickedCount) \(pickedCount == 1 ? "photo" : "photos") · change")
@@ -180,7 +261,15 @@ struct NewPileSheet: View {
     private var createButton: some View {
         Button { Task { await create() } } label: {
             Group {
-                if isImporting { ProgressView().tint(Color.onAccent) } else { Text(pickedCount == 0 ? "Choose photos to begin" : "Make the batch") }
+                if isImporting {
+                    if let progress = importProgress, progress.total > 1 {
+                        Text("Importing \(progress.done) of \(progress.total)…").monospacedDigit()
+                    } else {
+                        ProgressView().tint(Color.onAccent)
+                    }
+                } else {
+                    Text(pickedCount == 0 ? "Choose photos to begin" : "Make the batch")
+                }
             }
             .font(.headline)
             .frame(maxWidth: .infinity, minHeight: 30)
@@ -206,6 +295,10 @@ struct NewPileSheet: View {
                 images.append(image)
             }
         }
+        for asset in suggestedPicked.prefix(max(0, Self.fan.count - images.count)) {
+            guard !Task.isCancelled else { return }
+            if let image = await LibraryThumbnails.image(for: asset, maxPixelSide: 400) { images.append(image) }
+        }
         for photo in googlePicked.prefix(max(0, Self.fan.count - images.count)) {
             if let image = PhotoImport.thumbnail(at: photo.imageURL, maxPixelSide: 400) { images.append(image) }
         }
@@ -215,17 +308,36 @@ struct NewPileSheet: View {
 
     private func create() async {
         isImporting = true
-        defer { isImporting = false }
+        defer { isImporting = false; importProgress = nil }
         let collectionID = UUID()
         let library = await PhotoImport.photos(from: selection, collectionID: collectionID)
-        let photos = (library + googlePicked).enumerated().map { index, photo in
+        let suggested = await PhotoImport.photos(from: suggestedPicked, collectionID: collectionID) { done, total in
+            importProgress = (done, total)
+        }
+        let wanted = selection.count + suggestedPicked.count + googlePicked.count
+        let imported = Array((library + suggested + googlePicked).prefix(Self.maxPhotos))
+        guard !imported.isEmpty else {
+            // Don't close the sheet and lose the picks: say what happened instead.
+            importFailure = suggestedPicked.isEmpty
+                ? "None of the photos could be imported. Try again."
+                : "None of the photos could be downloaded. Some may be in iCloud only: check your connection and try again."
+            return
+        }
+        let photos = imported.enumerated().map { index, photo in
             var photo = photo
             photo.collectionID = collectionID
             photo.sortIndex = index
             return photo
         }
-        model.createPile(title: title.isEmpty ? "Untitled batch" : title, photos: photos, frame: frame)
-        dismiss()
+        model.createPile(title: title.isEmpty ? "Untitled batch" : title, place: place, photos: photos, frame: frame)
+        let expected = min(wanted, Self.maxPhotos)
+        if photos.count < expected {
+            let missing = expected - photos.count
+            dismissAfterNote = true
+            importFailure = "The batch was made with \(photos.count) of \(expected) photos. \(missing.counted("photo")) couldn't be downloaded, possibly because \(missing == 1 ? "it's" : "they're") in iCloud only. You can add \(missing == 1 ? "it" : "them") later."
+        } else {
+            dismiss()
+        }
     }
 }
 

@@ -65,6 +65,8 @@ final class GooglePhotos: NSObject {
     }
 
     private var token: (value: String, expires: Date)?
+    /// Every request to Google goes through this; tests swap in a stubbed session.
+    var urlSession: URLSession = .shared
     private var webSession: ASWebAuthenticationSession?
 
     /// Forgets the access token. Called on sign-out.
@@ -91,7 +93,7 @@ final class GooglePhotos: NSObject {
         let count = max(1, min(60, maxCount))
         let created: PickerSession = try await request("\(Self.pickerAPI)/sessions", token: accessToken, method: "POST",
                                                        body: ["pickingConfig": ["maxItemCount": String(count)]])
-        guard let pickerURL = URL(string: created.pickerUri) else {
+        guard let uri = created.pickerUri, let pickerURL = URL(string: uri) else {
             throw Failure.message("Google Photos did not return a valid picker session.")
         }
         defer {
@@ -164,7 +166,7 @@ final class GooglePhotos: NSObject {
             .init(name: "code_verifier", value: verifier),
         ]
         exchange.httpBody = form.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B").data(using: .utf8)
-        let (data, response) = try await URLSession.shared.data(for: exchange)
+        let (data, response) = try await urlSession.data(for: exchange)
         struct TokenResponse: Decodable { let access_token: String?; let expires_in: Int?; let error_description: String?; let error: String? }
         let decoded = try? JSONDecoder().decode(TokenResponse.self, from: data)
         guard (response as? HTTPURLResponse)?.statusCode == 200, let value = decoded?.access_token else {
@@ -199,19 +201,49 @@ final class GooglePhotos: NSObject {
 
     // MARK: - Picker
 
-    private struct PickerSession: Decodable {
+    /// Only `id` is required: Google may leave out `pickerUri` or `pollingConfig` on a session it
+    /// returns while polling (pollingConfig is documented as absent once picking is done).
+    struct PickerSession: Decodable {
         let id: String
-        let pickerUri: String
+        let pickerUri: String?
         let mediaItemsSet: Bool?
         let pollingConfig: PollingConfig?
         struct PollingConfig: Decodable { let pollInterval: String?; let timeoutIn: String? }
+
+        enum CodingKeys: String, CodingKey { case id, pickerUri, mediaItemsSet, pollingConfig }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            pickerUri = try? c.decodeIfPresent(String.self, forKey: .pickerUri)
+            mediaItemsSet = c.flexibleBool(.mediaItemsSet)
+            pollingConfig = try? c.decodeIfPresent(PollingConfig.self, forKey: .pollingConfig)
+        }
     }
 
-    private struct PickedItem: Decodable {
-        let id: String
+    /// What a poll needs from the session: whether picking is done. Nothing else is required.
+    struct PollState: Decodable {
+        let mediaItemsSet: Bool?
+        enum CodingKeys: String, CodingKey { case mediaItemsSet }
+        init(from decoder: Decoder) throws {
+            mediaItemsSet = (try? decoder.container(keyedBy: CodingKeys.self))?.flexibleBool(.mediaItemsSet)
+        }
+    }
+
+    struct PickedItem: Decodable {
+        let id: String?
         let createTime: String?
         let type: String?
         let mediaFile: MediaFile
+
+        enum CodingKeys: String, CodingKey { case id, createTime, type, mediaFile }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            // Only the file's download link is essential; everything else is best effort.
+            mediaFile = try c.decode(MediaFile.self, forKey: .mediaFile)
+            id = try? c.decodeIfPresent(String.self, forKey: .id)
+            createTime = try? c.decodeIfPresent(String.self, forKey: .createTime)
+            type = try? c.decodeIfPresent(String.self, forKey: .type)
+        }
         struct MediaFile: Decodable {
             let baseUrl: String
             let mimeType: String?
@@ -280,7 +312,7 @@ final class GooglePhotos: NSObject {
         while true {
             if Date.now > deadline { throw Failure.message("Google Photos timed out. Try choosing your photos again.") }
             try await Task.sleep(for: .seconds(closedByPerson ? 0.75 : interval))
-            let latest: PickerSession = try await request("\(Self.pickerAPI)/sessions/\(session.id)", token: token)
+            let latest: PollState = try await request("\(Self.pickerAPI)/sessions/\(session.id)", token: token)
             if latest.mediaItemsSet == true { return }
             if closedByPerson {
                 closedChecks += 1
@@ -289,8 +321,23 @@ final class GooglePhotos: NSObject {
         }
     }
 
-    private func pickedItems(sessionID: String, token: String) async throws -> [PickedItem] {
-        struct Page: Decodable { let mediaItems: [PickedItem]?; let nextPageToken: String? }
+    func pickedItems(sessionID: String, token: String) async throws -> [PickedItem] {
+        // One item Batches can't read (no download link, say) is skipped rather than failing the
+        // whole page and losing every pick.
+        struct Lossy: Decodable {
+            let item: PickedItem?
+            init(from decoder: Decoder) throws { item = try? PickedItem(from: decoder) }
+        }
+        struct Page: Decodable {
+            let mediaItems: [Lossy]?
+            let nextPageToken: String?
+            enum CodingKeys: String, CodingKey { case mediaItems, nextPageToken }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                mediaItems = try? c.decodeIfPresent([Lossy].self, forKey: .mediaItems)
+                nextPageToken = try? c.decodeIfPresent(String.self, forKey: .nextPageToken)
+            }
+        }
         var items: [PickedItem] = []
         var pageToken: String?
         for _ in 0..<10 {
@@ -298,19 +345,31 @@ final class GooglePhotos: NSObject {
             url.queryItems = [.init(name: "sessionId", value: sessionID), .init(name: "pageSize", value: "100")]
             if let pageToken { url.queryItems?.append(.init(name: "pageToken", value: pageToken)) }
             let page: Page = try await request(url.string!, token: token)
-            items += page.mediaItems ?? []
+            let pageItems = page.mediaItems ?? []
+            let readable = pageItems.compactMap(\.item)
+            if readable.count < pageItems.count {
+                print("GooglePhotos: skipped \(pageItems.count - readable.count) picked item(s) with no readable mediaFile")
+            }
+            items += readable
             guard let next = page.nextPageToken, !next.isEmpty else { break }
             pageToken = next
         }
         return items
     }
 
-    private func download(_ item: PickedItem, into dir: URL, token: String) async throws -> URL {
+    func download(_ item: PickedItem, into dir: URL, token: String) async throws -> URL {
         for suffix in ["=w4096-h4096", "=d"] {
             guard let url = URL(string: item.mediaFile.baseUrl + suffix) else { continue }
             var req = URLRequest(url: url)
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            guard let reply = try? await URLSession.shared.data(for: req) else { continue }
+            let reply: (Data, URLResponse)
+            do {
+                reply = try await urlSession.data(for: req)
+            } catch {
+                // A cancel is a cancel, not a failed download to retry with the next size.
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                continue
+            }
             let (data, response) = reply
             guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { continue }
             let mime = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? item.mediaFile.mimeType ?? "image/jpeg"
@@ -324,7 +383,7 @@ final class GooglePhotos: NSObject {
 
     /// A downloaded pick as a Photo. Google's resized copies usually drop EXIF, so the capture
     /// date and camera settings come from the picker's metadata when the file has none.
-    private func makePhoto(_ item: PickedItem, url: URL, collectionID: UUID, sortIndex: Int) -> Photo {
+    func makePhoto(_ item: PickedItem, url: URL, collectionID: UUID, sortIndex: Int) -> Photo {
         let info = PhotoImport.metadata(of: url, fallbackAsset: nil)
         let created = item.createTime.flatMap { string in
             (try? Date(string, strategy: .iso8601)) ?? ISO8601DateFormatter.withFractions.date(from: string)
@@ -344,18 +403,19 @@ final class GooglePhotos: NSObject {
 
     // MARK: - REST
 
-    private func request<T: Decodable>(_ url: String, token: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
+    func request<T: Decodable>(_ url: String, token: String, method: String = "GET", body: [String: Any]? = nil) async throws -> T {
         let data = try await send(url, token: token, method: method, body: body)
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            print("GooglePhotos: couldn't decode \(T.self) from \(url): \(error)")
+            let body = String(decoding: data.prefix(2000), as: UTF8.self)
+            print("GooglePhotos: couldn't decode \(T.self) from \(url): \(error)\nGooglePhotos reply: \(body)")
             throw Failure.message("Google Photos sent a reply Batches couldn't read.")
         }
     }
 
     @discardableResult
-    private func send(_ url: String, token: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+    func send(_ url: String, token: String, method: String, body: [String: Any]? = nil) async throws -> Data {
         var req = URLRequest(url: URL(string: url)!)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -363,7 +423,7 @@ final class GooglePhotos: NSObject {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await urlSession.data(for: req)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
             self.token = nil
@@ -413,6 +473,14 @@ private extension KeyedDecodingContainer {
     func flexibleDouble(_ key: Key) -> Double? {
         if let value = try? decodeIfPresent(Double.self, forKey: key) { return value }
         if let text = try? decodeIfPresent(String.self, forKey: key) { return Double(text) }
+        return nil
+    }
+
+    /// A boolean sent as true/false, "true"/"false" or 0/1; nil when absent or unreadable.
+    func flexibleBool(_ key: Key) -> Bool? {
+        if let value = try? decodeIfPresent(Bool.self, forKey: key) { return value }
+        if let text = try? decodeIfPresent(String.self, forKey: key) { return Bool(text.lowercased()) }
+        if let number = try? decodeIfPresent(Int.self, forKey: key) { return number != 0 }
         return nil
     }
 }
