@@ -22,6 +22,7 @@ The app runs on Apple's own frameworks, with no web views:
 | Develop and edit | Core Image (`CIRAWFilter`, built-in filters, custom Metal CI kernels), MetalKit preview |
 | Photos extension | "Edit with Batches" inside the Photos app (`PHContentEditingController`), sharing the same editor and pipeline |
 | Sharing | LinkPresentation: a `batches.space` link with the batch's title and a photo attached, so Messages shows a preview without fetching anything |
+| Posting to Instagram and TikTok | Core Graphics and Core Image render 4:5, 1:1 and 9:16 posts on this phone; AVFoundation (`AVAssetWriter`, H.264) makes a slideshow video; the system share sheet hands them off |
 | Links | Universal links (`applinks:batches.space`) and the `strewn://` scheme |
 | Copy/paste edits | `UIPasteboard` with a custom type, so a copied recipe survives between sessions |
 | Capture (switched off) | AVFoundation: `AVCapturePhotoOutput` with Bayer RAW and Apple ProRAW, manual ISO, shutter and white balance; `onCameraCaptureEvent` (AVKit, iOS 18) for Camera Control and the volume buttons |
@@ -51,6 +52,7 @@ Instagram-style square and 4:5 crops are the thing this app exists to avoid. Eve
 - The film roll keeps each frame's own width at a shared height, so nothing is trimmed to fit a fixed film gate.
 - The editor's crop is opt-in. "Original" is the default and keeps the whole frame; the gallery and viewer label a photo as cropped only when its owner chose a crop.
 - The web viewer and the photobook follow the same rule: every layout is computed from each photo's own shape.
+- Posts made for Instagram and TikTok (`SocialShareSheet`, `SocialExport`) keep the whole photo on a blurred copy of itself or on the batch's background. Cropping to fill the post is a choice the person makes in that sheet, never the default.
 
 ## Getting started
 

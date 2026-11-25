@@ -104,9 +104,15 @@ enum LinkShareSheet {
     /// Presents over whatever is on top, so it works from sheets and the photo viewer too.
     @MainActor
     static func present(_ item: LinkShareItem) {
+        present(items: [item])
+    }
+
+    /// Any items: files from a social export, for instance.
+    @MainActor
+    static func present(items: [Any]) {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         guard var top = scenes.compactMap(\.keyWindow).first?.rootViewController else { return }
         while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
-        top.present(UIActivityViewController(activityItems: [item], applicationActivities: nil), animated: true)
+        top.present(UIActivityViewController(activityItems: items, applicationActivities: nil), animated: true)
     }
 }
