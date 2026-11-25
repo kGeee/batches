@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Batches redesign options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,300..800&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..500&family=Reenie+Beanie&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===== page (review board) ===== */
+:root{
+  --page:#f3f3f0; --page-ink:#1d1e20; --page-ink2:#5d6066; --page-rule:rgba(29,30,32,.14);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --page:#1c1d1f; --page-ink:#ececea; --page-ink2:#a5a7ab; --page-rule:rgba(236,236,234,.16); }
+}
+:root[data-theme="dark"]{ --page:#1c1d1f; --page-ink:#ececea; --page-ink2:#a5a7ab; --page-rule:rgba(236,236,234,.16); }
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--page);color:var(--page-ink);font:400 16px/1.55 "Instrument Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+img{display:block}
+.intro{max-width:1320px;margin:0 auto;padding:64px 40px 24px}
+.intro h1{font:500 44px/1.05 "Newsreader",Georgia,serif;letter-spacing:-.01em;max-width:18ch}
+.intro p{max-width:64ch;color:var(--page-ink2);margin-top:14px}
+.toc{display:flex;flex-wrap:wrap;gap:10px 28px;margin-top:22px}
+.toc a{color:var(--page-ink);text-underline-offset:4px}
+.dir{max-width:1400px;margin:0 auto;padding:56px 40px 40px;border-top:1px solid var(--page-rule)}
+.dir-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:40px;margin-bottom:34px}
+.dir-head h2{font-size:40px;line-height:1.05;margin-bottom:12px}
+.dir-head .why{color:var(--page-ink2);max-width:58ch}
+.dir-head h3{font:600 15px/1.3 "Instrument Sans",sans-serif;margin-bottom:8px}
+.dir-head ul{padding-left:18px;color:var(--page-ink2);display:grid;gap:6px;max-width:60ch}
+.dir-head ul b{color:var(--page-ink);font-weight:600}
+#lab .dir-head h2{font:700 44px/1 "Archivo Narrow",sans-serif;letter-spacing:-.01em}
+#opening .dir-head h2{font:800 48px/.95 "Bricolage Grotesque",sans-serif;font-stretch:75%;letter-spacing:-.02em}
+#fog .dir-head h2{font:300 italic 44px/1.05 "Newsreader",serif}
+.row{display:flex;gap:24px;overflow-x:auto;padding:8px 4px 24px;scroll-snap-type:x mandatory}
+figure{flex:none;scroll-snap-align:start}
+figcaption{font:500 13px/1.3 "Instrument Sans",sans-serif;color:var(--page-ink2);margin-top:12px;padding-left:6px}
+figcaption b{color:var(--page-ink);font-weight:600;display:block;margin-bottom:2px}
+.foot{max-width:1320px;margin:0 auto;padding:30px 40px 80px;color:var(--page-ink2);font-size:14px;border-top:1px solid var(--page-rule)}
+@media (max-width:760px){
+  .intro,.dir,.foot{padding-left:16px;padding-right:16px}
+  .dir-head{grid-template-columns:1fr;gap:18px}
+  .intro h1{font-size:34px}
+}
+
+/* ===== phone shell ===== */
+.ph{width:300px;height:650px;border:9px solid #000;border-radius:48px;overflow:hidden;position:relative;box-shadow:0 24px 50px -22px rgba(0,0,0,.45)}
+.ph .scr{position:absolute;inset:0;overflow:hidden}
+.sb{position:absolute;top:0;left:0;right:0;height:44px;z-index:40;display:flex;justify-content:space-between;align-items:center;padding:4px 26px 0 32px;font:600 13px -apple-system,"SF Pro Text","Instrument Sans",sans-serif}
+.sb:before{content:"";position:absolute;left:50%;top:9px;width:88px;height:26px;margin-left:-44px;border-radius:14px;background:#000}
+.sb i{display:inline-flex;gap:4px;align-items:center;font-style:normal}
+.sb i u{display:inline-block;width:18px;height:9px;border-radius:3px;background:currentColor}
+.sb i s{display:inline-flex;gap:1.5px;align-items:flex-end;text-decoration:none}
+.sb i s em{width:2.5px;background:currentColor;border-radius:1px}
+.home{position:absolute;bottom:6px;left:50%;width:100px;height:4px;margin-left:-50px;border-radius:2px;background:currentColor;opacity:.8;z-index:45}
+svg.ic{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.cover{object-fit:cover;width:100%;height:100%}
+
+/* =====================================================
+   A. LAB ENVELOPE
+   ===================================================== */
+.A{--blot:#24372e;--blot2:#2c4338;--kraft:#cfae7a;--kraft-d:#b8935c;--ink:#1f1a14;--grease:#d0362a;--paper:#f7f4ec;--edge:#e9902d}
+.A .scr{background:var(--blot);color:#efe9dc;font-family:"Archivo Narrow",sans-serif}
+.A .blotter{background:
+  radial-gradient(120% 70% at 50% 0%,rgba(255,255,255,.06),transparent 60%),
+  repeating-linear-gradient(90deg,rgba(0,0,0,.05) 0 1px,transparent 1px 4px),var(--blot)}
+.A .hand{font-family:"Reenie Beanie",cursive;font-weight:400;line-height:.9}
+.A .top{position:absolute;top:50px;left:18px;right:18px}
+.A .who{display:flex;justify-content:space-between;align-items:flex-end}
+.A .who h4{font:700 30px/1 "Archivo Narrow",sans-serif;letter-spacing:-.01em}
+.A .who small{display:block;font-size:12px;color:#b6c2b8;margin-top:4px;letter-spacing:.01em}
+.A .slip{position:absolute;top:118px;right:14px;width:132px;background:#f4e27a;color:#3b3214;padding:8px 9px 9px;transform:rotate(3deg);box-shadow:0 6px 12px -4px rgba(0,0,0,.5);z-index:5}
+.A .slip .hand{font-size:25px;display:block}
+.A .slip span{font-size:10.5px;display:block;margin-top:2px}
+.A .tabs{position:absolute;top:126px;left:18px;display:flex;gap:3px}
+.A .tabs span{font:600 11.5px/1 "Archivo Narrow";padding:7px 9px 9px;background:var(--blot2);color:#a8b6ab;border-radius:5px 5px 0 0}
+.A .tabs span.on{background:var(--kraft);color:var(--ink)}
+.A .env{position:absolute;background:var(--kraft);color:var(--ink);box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 14px 22px -10px rgba(0,0,0,.65);border-radius:2px}
+.A .env:before{content:"";position:absolute;left:0;right:0;top:0;height:20px;background:linear-gradient(var(--kraft-d),var(--kraft));clip-path:polygon(0 0,100% 0,92% 100%,8% 100%);opacity:.7}
+.A .env .peek{position:absolute;left:10%;right:10%;bottom:calc(100% - 14px);height:58px;display:flex;justify-content:center}
+.A .env .peek img{width:46%;height:100%;object-fit:cover;border:3px solid var(--paper);margin:0 -6px;box-shadow:0 2px 4px rgba(0,0,0,.35)}
+.A .env .lbl{position:absolute;left:10px;right:10px;bottom:10px}
+.A .env .lbl .hand{font-size:34px;color:#1d2a52}
+.A .stamps{display:flex;gap:5px;margin-top:5px}
+.A .stamps b{font:600 9.5px/1 "Archivo Narrow";border:1.2px solid rgba(31,26,20,.55);padding:3px 4px 2px;border-radius:2px;color:rgba(31,26,20,.75)}
+.A .stamps b.r{border-color:var(--grease);color:var(--grease)}
+.A .rail{position:absolute;left:0;right:0;bottom:0;height:78px;background:#16221c;display:flex;justify-content:space-around;align-items:center;padding-bottom:12px;border-top:1px solid rgba(255,255,255,.07)}
+.A .rail span{font:600 11px "Archivo Narrow";color:#8fa094;display:grid;justify-items:center;gap:3px}
+.A .rail span.on{color:#f0e6cf}
+.A .rail .plus{width:50px;height:50px;border-radius:50%;background:var(--grease);display:grid;place-items:center;color:#fff;font-size:24px;box-shadow:0 0 0 4px #16221c,0 0 0 5px rgba(255,255,255,.12)}
+/* contact sheet */
+.A .sheet{background:#121210;color:#e9e5da}
+.A .sheet .hdr{position:absolute;top:48px;left:16px;right:16px}
+.A .sheet .nav{display:flex;justify-content:space-between;font:600 12px "Archivo Narrow";color:#c9c3b4}
+.A .sheet h4{font:700 26px/1.02 "Archivo Narrow";margin-top:12px;letter-spacing:-.01em}
+.A .sheet .note{font-size:26px;color:#f1d76a;margin-top:2px}
+.A .strip{position:absolute;left:12px;right:12px;background:#2a1f14;padding:12px 8px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.A .strip:before,.A .strip:after{content:"";position:absolute;left:6px;right:6px;height:5px;background:repeating-linear-gradient(90deg,#121210 0 6px,transparent 6px 11px)}
+.A .strip:before{top:3px}.A .strip:after{bottom:3px}
+.A .strip .f{position:relative;aspect-ratio:3/2}
+.A .strip .f img{width:100%;height:100%;object-fit:cover;filter:saturate(.9)}
+.A .strip .f i{position:absolute;left:1px;bottom:-11px;font:600 7.5px "Archivo Narrow";color:var(--edge);font-style:normal}
+.A .circle{position:absolute;border:2.5px solid var(--grease);border-radius:50%;transform:rotate(-6deg)}
+.A .tool{position:absolute;left:12px;right:12px;bottom:26px;display:flex;gap:6px}
+.A .tool span{flex:1;height:40px;border-radius:4px;background:#24231f;display:grid;place-items:center;font:600 11.5px "Archivo Narrow";color:#d7d1c3}
+.A .tool span.go{flex:1.8;background:var(--grease);color:#fff}
+/* viewer: print turned over */
+.A .loupe{background:#0e0e0d;color:#eee}
+.A .print{position:absolute;background:var(--paper);padding:9px 9px 34px;box-shadow:0 20px 30px -12px rgba(0,0,0,.8)}
+.A .print img{width:100%;height:100%;object-fit:cover}
+.A .back{position:absolute;background:#ece7da;color:#2b2a26;padding:12px 14px;box-shadow:0 20px 30px -12px rgba(0,0,0,.8)}
+.A .back .hand{font-size:30px;color:#1d2a52}
+.A .back .stamp{font:600 9px "Archivo Narrow";color:#8c8577;border:1px dashed #b8b1a2;padding:3px 5px;display:inline-block;margin-top:6px}
+.A .acts{position:absolute;left:18px;right:18px;bottom:30px;display:flex;align-items:center;gap:18px;font:600 13px "Archivo Narrow";color:#dcd6c8}
+.A .acts span{display:flex;gap:5px;align-items:center}
+.A .acts svg{font-size:19px}
+.A .acts .sp{margin-left:auto}
+.A .flip{position:absolute;left:50%;transform:translateX(-50%);font:600 11px "Archivo Narrow";color:#9c968a;display:flex;gap:6px;align-items:center;white-space:nowrap}
+/* friends: mail */
+.A .mail .row2{position:absolute;left:14px;right:14px}
+.A .post{position:absolute;right:12px;top:10px;width:52px;height:52px;border:1.5px solid rgba(31,26,20,.5);border-radius:50%;display:grid;place-items:center;text-align:center;font:600 7.5px/1.15 "Archivo Narrow";color:rgba(31,26,20,.7);transform:rotate(-12deg)}
+.A .from{font:600 11px "Archivo Narrow";color:rgba(31,26,20,.7)}
+
+/* =====================================================
+   B. OPENING NIGHT
+   ===================================================== */
+.B{--wall:#e8e9e5;--ink:#141518;--ink2:#5e6168;--ultra:#2337d8;--wall2:#dcded8}
+.B .scr{background:var(--wall);color:var(--ink);font-family:"Instrument Sans",sans-serif}
+.B .disp{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-stretch:75%;letter-spacing:-.035em;line-height:.86}
+.B .tb{position:absolute;top:46px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--ink2)}
+.B .tb b{color:var(--ink);font-weight:600}
+.B .name{position:absolute;top:66px;left:12px;font-size:84px}
+.B .stats{position:absolute;top:148px;left:16px;font-size:12px;color:var(--ink2)}
+.B .stats u{text-decoration:none;color:var(--ink);font-weight:600}
+.B .ticker{position:absolute;top:174px;left:0;right:0;height:30px;background:var(--ultra);color:#fff;display:flex;align-items:center;gap:8px;padding:0 16px;font-size:12px;font-weight:500}
+.B .ticker .d{width:7px;height:7px;border-radius:50%;background:#fff}
+.B .hang{position:absolute;left:16px;right:16px}
+.B .hang img{width:100%;object-fit:cover}
+.B .label{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin-top:8px;font-size:11px;color:var(--ink2)}
+.B .label h5{font-family:"Bricolage Grotesque";font-weight:700;font-size:17px;letter-spacing:-.01em;color:var(--ink);line-height:1.1}
+.B .label .n{font-family:"Bricolage Grotesque";font-weight:800;font-size:28px;line-height:.9;color:var(--ultra);grid-row:span 2;align-self:start}
+.B .filt{position:absolute;top:214px;left:16px;right:16px;display:flex;gap:16px;font-size:12.5px;color:var(--ink2)}
+.B .filt span.on{color:var(--ink);font-weight:600;box-shadow:0 2px 0 var(--ink)}
+.B .nav{position:absolute;left:0;right:0;bottom:0;height:72px;background:var(--ink);color:#bfc1c7;display:flex;align-items:center;justify-content:space-between;padding:0 22px 12px;font-size:12px;font-weight:600}
+.B .nav .on{color:#fff}
+.B .nav .new{background:var(--ultra);color:#fff;padding:10px 16px;font-weight:600}
+/* batch */
+.B .hero{position:absolute;left:0;right:0;top:0;height:330px}
+.B .hero:after{content:"";position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,.25),transparent 30%,transparent 55%,rgba(0,0,0,.55))}
+.B .hero h4{position:absolute;left:12px;right:12px;bottom:14px;color:#fff;font-size:58px;z-index:2}
+.B .hero .tb{color:#fff;z-index:2}
+.B .hero .tb b{color:#fff}
+.B .wl{position:absolute;top:340px;left:16px;right:16px;display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink2)}
+.B .wl b{color:var(--ink);font-weight:600}
+.B .pair{position:absolute;top:392px;left:16px;right:16px;display:grid;grid-template-columns:1.35fr 1fr;gap:10px;align-items:end}
+.B .pair img{width:100%;object-fit:cover}
+.B .pair small{font-size:10px;color:var(--ink2);display:block;margin-top:4px}
+.B .bar{position:absolute;left:12px;right:12px;bottom:24px;display:flex;background:var(--ink);color:#fff;font-size:12px;font-weight:600}
+.B .bar span{flex:1;padding:12px 0;text-align:center}
+.B .bar span.go{background:var(--ultra);flex:1.5}
+/* viewer */
+.B .room{background:var(--wall)}
+.B .room .x{position:absolute;top:50px;left:16px;right:16px;display:flex;justify-content:space-between;font-size:12px;font-weight:600}
+.B .room .frame{position:absolute;left:22px;right:22px;top:130px;box-shadow:0 16px 30px -18px rgba(0,0,0,.5)}
+.B .room .frame img{width:100%}
+.B .placard{position:absolute;left:22px;right:22px;top:340px;border-top:2px solid var(--ink);padding-top:10px;display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:11.5px;color:var(--ink2)}
+.B .placard h5{font-family:"Bricolage Grotesque";font-weight:700;font-size:20px;letter-spacing:-.015em;color:var(--ink);line-height:1.05}
+.B .placard .num{font-family:"Bricolage Grotesque";font-weight:800;font-size:34px;color:var(--ultra);line-height:.85;grid-row:span 2}
+.B .say{position:absolute;left:22px;right:22px;top:440px;font-size:14px;line-height:1.4}
+.B .say b{font-weight:600}
+.B .vacts{position:absolute;left:22px;right:22px;bottom:30px;display:flex;gap:8px}
+.B .vacts span{flex:1;border:1.5px solid var(--ink);padding:10px 0;display:flex;gap:6px;justify-content:center;align-items:center;font-size:12px;font-weight:600}
+.B .vacts span.on{background:var(--ultra);border-color:var(--ultra);color:#fff}
+/* friends */
+.B .inv{position:absolute;left:0;right:0}
+.B .inv .poster{position:relative;height:200px;overflow:hidden}
+.B .inv .poster h4{position:absolute;left:12px;bottom:10px;right:12px;color:#fff;font-size:44px}
+.B .inv .poster:after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 40%,rgba(0,0,0,.55))}
+.B .inv .poster h4{z-index:2}
+.B .inv .poster .by{position:absolute;top:10px;left:12px;z-index:2;background:var(--wall);color:var(--ink);font-size:11px;font-weight:600;padding:4px 8px}
+.B .inv .meta{display:flex;justify-content:space-between;padding:8px 16px 0;font-size:11px;color:var(--ink2)}
+.B .inv .meta b{color:var(--ultra);font-weight:600}
+
+/* =====================================================
+   C. FOG
+   ===================================================== */
+.C{--fog:#e3e5e0;--fog2:#d7dad3;--ink:#2b2e2c;--ink2:#7a7f7a;--glass:#45695f}
+.C .scr{background:var(--fog);color:var(--ink);font-family:"Newsreader",serif}
+.C .ui{font-family:"Instrument Sans",sans-serif}
+.C .h{position:absolute;top:56px;left:22px;right:22px;display:flex;justify-content:space-between;align-items:baseline}
+.C .h h4{font-weight:400;font-size:26px;letter-spacing:-.01em}
+.C .h span{font-size:12px;color:var(--ink2)}
+.C .quiet{position:absolute;top:96px;left:22px;right:22px;font-size:12px;color:var(--ink2);display:flex;gap:16px}
+.C .quiet .on{color:var(--ink)}
+.C .note{position:absolute;top:126px;left:22px;right:22px;font-size:14px;font-style:italic;color:var(--ink2);line-height:1.35}
+.C .note b{font-style:normal;font-weight:500;color:var(--ink)}
+.C .b{position:absolute;left:22px;right:22px}
+.C .pile{position:relative}
+.C .pile img{position:relative;width:100%;object-fit:cover;border-radius:2px;z-index:2}
+.C .pile:before,.C .pile:after{content:"";position:absolute;left:8px;right:8px;top:-4px;bottom:4px;background:#c9ccc5;border-radius:2px}
+.C .pile:after{left:16px;right:16px;top:-8px;bottom:8px;background:#d0d3cc}
+.C .cap{display:flex;justify-content:space-between;align-items:baseline;margin-top:10px}
+.C .cap h5{font-size:17px;font-weight:400}
+.C .cap small{font-family:"Instrument Sans";font-size:11px;color:var(--ink2)}
+.C .cap2{font-family:"Instrument Sans";font-size:11px;color:var(--ink2);margin-top:2px}
+.C .dock{position:absolute;bottom:0;left:0;right:0;height:70px;display:flex;justify-content:center;align-items:center;gap:40px;padding-bottom:12px;font-family:"Instrument Sans";font-size:12px;color:var(--ink2)}
+.C .dock .on{color:var(--ink);font-weight:600}
+.C .dock .add{width:38px;height:38px;border-radius:50%;border:1.3px solid var(--ink);display:grid;place-items:center;color:var(--ink);font-size:18px}
+/* batch */
+.C .bt{position:absolute;top:52px;left:22px;right:22px;display:flex;justify-content:space-between;font-family:"Instrument Sans";font-size:12px;color:var(--ink2)}
+.C .bt b{color:var(--glass);font-weight:500}
+.C .ttl{position:absolute;top:86px;left:22px;right:22px}
+.C .ttl h4{font-size:30px;font-weight:300;line-height:1.05;letter-spacing:-.01em}
+.C .ttl p{font-family:"Instrument Sans";font-size:11.5px;color:var(--ink2);margin-top:6px}
+.C .ttl em{display:block;font-size:14px;color:var(--ink2);margin-top:10px}
+.C .fr{position:absolute;left:22px;right:22px}
+.C .fr img{width:100%;object-fit:cover;border-radius:2px}
+.C .fr small{font-family:"Instrument Sans";font-size:10.5px;color:var(--ink2);display:flex;justify-content:space-between;margin-top:6px}
+.C .addtxt{position:absolute;left:50%;transform:translateX(-50%);bottom:28px;font-family:"Instrument Sans";font-size:13px;font-weight:500;background:var(--ink);color:var(--fog);padding:11px 20px;border-radius:22px;white-space:nowrap;display:flex;gap:16px}
+.C .addtxt span{opacity:.6;font-weight:400}
+/* viewer */
+.C .still{background:#d4d7d0}
+.C .still .ph-img{position:absolute;left:0;right:0;top:170px}
+.C .still .ph-img img{width:100%}
+.C .still .tap{position:absolute;top:56px;left:22px;right:22px;display:flex;justify-content:space-between;font-family:"Instrument Sans";font-size:12px;color:var(--ink2)}
+.C .still .cm{position:absolute;left:22px;right:22px;top:420px}
+.C .still .cm p{font-size:17px;line-height:1.35;font-style:italic}
+.C .still .cm small{font-family:"Instrument Sans";font-size:11.5px;color:var(--ink2);display:block;margin-top:6px}
+/* desk: name alone at rest; followers and filters slide in once you scroll */
+.C .feed{position:absolute;top:44px;left:0;right:0;bottom:0;overflow-y:auto;scrollbar-width:none;padding:0 22px 96px}
+.C .feed::-webkit-scrollbar{display:none}
+.C .feed~.dock{z-index:6;background:linear-gradient(to top,var(--fog) 62%,rgba(227,229,224,0))}
+.C .feed h4.me{font-weight:400;font-size:26px;letter-spacing:-.01em;margin:14px 0 10px}
+.C .feed .note{position:static;margin-bottom:22px}
+.C .feed .item{margin-bottom:22px}
+.C .feed .duo2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.C .reveal{position:absolute;top:44px;left:0;right:0;z-index:5;padding:8px 22px 10px;text-align:center;background:rgba(227,229,224,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  opacity:0;transform:translateY(-10px);pointer-events:none;transition:opacity .28s ease,transform .32s cubic-bezier(.2,.8,.2,1)}
+.C .reveal.show{opacity:1;transform:none;pointer-events:auto}
+.C .reveal .fol{font-size:12px;color:var(--ink2)}
+.C .reveal .quiet{position:static;justify-content:center;margin-top:7px}
+.C .hint{position:absolute;bottom:78px;left:0;right:0;text-align:center;font-family:"Instrument Sans";font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);opacity:.7;transition:opacity .3s}
+.C .hint.gone{opacity:0}
+/* viewer: comments take turns as the caption */
+.C .still .cm{height:90px}
+.C .still .cm .c{position:absolute;inset:0 0 auto;opacity:0;transform:translateY(10px);filter:blur(3px);transition:opacity .5s ease,transform .6s cubic-bezier(.2,.8,.2,1),filter .5s ease}
+.C .still .cm .c.on{opacity:1;transform:none;filter:none}
+.C .still .cm .c.out{opacity:0;transform:translateY(-10px);filter:blur(3px)}
+.C .still .cm .pips{position:absolute;top:-16px;left:0;display:flex;gap:4px}
+.C .still .cm .pips i{width:14px;height:2px;border-radius:1px;background:rgba(43,46,44,.18);overflow:hidden;position:relative}
+.C .still .cm .pips i.on:after{content:"";position:absolute;inset:0;background:var(--ink2);transform-origin:left;animation:pip 1.6s linear forwards}
+@keyframes pip{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media (prefers-reduced-motion:reduce){.C .reveal,.C .still .cm .c{transition:opacity .2s}.C .reveal,.C .still .cm .c,.C .still .cm .c.out{transform:none;filter:none}.C .still .cm .pips i.on:after{animation:none;transform:none}}
+.C .still .va{position:absolute;left:22px;right:22px;bottom:34px;display:flex;gap:22px;font-family:"Instrument Sans";font-size:12.5px;color:var(--ink)}
+.C .still .va span{display:flex;gap:6px;align-items:center}
+.C .still .va svg{font-size:18px}
+.C .still .va .sp{margin-left:auto}
+.C .still .va .on{color:var(--glass)}
+.C .dots{position:absolute;top:142px;left:0;right:0;display:flex;justify-content:center;gap:5px}
+.C .dots i{width:5px;height:5px;border-radius:50%;background:#a9ada6}
+.C .dots i.on{background:var(--ink)}
+/* friends */
+.C .fd{position:absolute;left:22px;right:22px}
+.C .fd .by{font-family:"Instrument Sans";font-size:11.5px;color:var(--ink2);margin-bottom:8px;display:flex;justify-content:space-between}
+.C .fd .by b{color:var(--ink);font-weight:500}
+.C .fd .duo{display:grid;grid-template-columns:2fr 1fr;gap:4px}
+.C .fd .duo img{width:100%;height:120px;object-fit:cover;border-radius:2px}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="heart" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
+  <symbol id="bubble" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+  <symbol id="share" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 13v7h14v-7"/></symbol>
+  <symbol id="back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="turn" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 5v4h-4M20 12a8 8 0 0 1-14 5.3M4 19v-4h4"/></symbol>
+</svg>
+
+<header class="intro">
+  <h1>Three ways Batches could look next</h1>
+  <p>Each direction keeps every feature from build 11: the desk of batches with filters and activity, the batch page with frames, cover, arrange and font, the photo viewer with likes, comments and share, and the friends feed with group batches. Only the look and the gestures change. Photos are the book set in <code>img/book</code>.</p>
+  <nav class="toc"><a href="#lab">Lab envelope</a><a href="#opening">Opening night</a><a href="#fog">Fog</a></nav>
+</header>
+
+<!-- ============================ A ============================ -->
+<section class="dir" id="lab">
+  <div class="dir-head">
+    <div>
+      <h2>Lab envelope</h2>
+      <p class="why">Today's piles are prints on a desk; this goes back one step to the photo lab. Every batch arrives in its own kraft envelope with prints peeking out, the batch page is a contact sheet marked up in grease pencil, and a photo turns over to show who wrote on the back. The metaphor now explains the product: a batch is a roll you got developed and handed around.</p>
+    </div>
+    <div>
+      <h3>What changes from today</h3>
+      <ul>
+        <li><b>Desk</b> moves from linen to a green blotter; batches become envelopes, so title and privacy read as a handwritten label and lab stamps instead of pills.</li>
+        <li><b>Activity</b> becomes a sticky note on the blotter rather than a banner row.</li>
+        <li><b>Batch</b> is a contact sheet: a grease-pencil circle marks the cover, edge numbers replace the "01" labels.</li>
+        <li><b>Viewer</b> keeps the print border; comments live on the back of the print (tap the turn icon or swipe up to flip).</li>
+        <li><b>Friends</b> reads as incoming mail, each envelope postmarked with the sender.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="row">
+    <!-- Desk -->
+    <figure>
+      <div class="ph A"><div class="scr blotter">
+        <div class="sb"><span>9:41</span><i><s><em style="height:4px"></em><em style="height:6px"></em><em style="height:8px"></em><em style="height:10px"></em></s><u></u></i></div>
+        <div class="top"><div class="who"><div><h4>kevin</h4><small>3 batches, 12 frames. 2 followers, 1 following</small></div></div></div>
+        <div class="tabs"><span class="on">All</span><span>Shared</span><span>Private</span><span>Group</span></div>
+        <div class="slip"><span class="hand">Maya + Theo liked it!</span><span>3 likes, 1 comment on Big Sur</span></div>
+
+        <div class="env" style="left:18px;right:18px;top:244px;height:134px">
+          <div class="peek" style="height:84px;left:14%;right:14%"><img src="../img/book/coast.jpg" alt=""><img src="../img/book/shore.jpg" alt="" style="transform:rotate(4deg)"><img src="../img/book/road.jpg" alt="" style="transform:rotate(-3deg)"></div>
+          <div class="lbl"><div class="hand">Big Sur, one afternoon</div>
+            <div class="stamps"><b>5 EXP</b><b>OCT 27</b><b>HWY 1</b><b class="r">FOLLOWERS</b></div></div>
+        </div>
+        <div class="env" style="left:18px;width:126px;top:418px;height:104px;transform:rotate(-2deg)">
+          <div class="peek"><img src="../img/book/dunes.jpg" alt=""><img src="../img/book/stars.jpg" alt=""></div>
+          <div class="lbl"><div class="hand" style="font-size:27px">Joshua Tree overnight</div><div class="stamps"><b>4 EXP</b><b class="r">1 PERSON</b></div></div>
+        </div>
+        <div class="env" style="right:16px;width:122px;top:424px;height:98px;transform:rotate(2.5deg)">
+          <div class="peek"><img src="../img/book/fog.jpg" alt=""><img src="../img/book/gate.jpg" alt=""></div>
+          <div class="lbl"><div class="hand" style="font-size:27px">Fog over the bay</div><div class="stamps"><b>3 EXP</b><b>ONLY ME</b></div></div>
+        </div>
+        <div class="rail"><span class="on">Desk</span><div class="plus">+</div><span>Friends</span></div>
+        <div class="home" style="color:#fff"></div>
+      </div></div>
+      <figcaption><b>Desk</b>Envelopes on a blotter; tap one to slide the prints out.</figcaption>
+    </figure>
+
+    <!-- Batch -->
+    <figure>
+      <div class="ph A"><div class="scr sheet">
+        <div class="sb" style="color:#fff"><span>9:41</span><i><u></u></i></div>
+        <div class="hdr">
+          <div class="nav"><span>&lsaquo; Desk</span><span style="color:#f1d76a">Followers &#9662;</span><span>&middot;&middot;&middot;</span></div>
+          <h4>Big Sur, one afternoon</h4>
+          <div class="note hand">+ add a description</div>
+          <div style="font:500 11px 'Archivo Narrow';color:#8f8a7e;margin-top:4px">October 27, 2026. Highway 1. 5 frames</div>
+        </div>
+        <div class="strip" style="top:186px">
+          <div class="f"><img src="../img/book/shore.jpg" alt=""><i>&#9656; 1</i></div>
+          <div class="f"><img src="../img/book/coast.jpg" alt=""><i>2</i></div>
+          <div class="f"><img src="../img/book/road.jpg" alt=""><i>3</i></div>
+        </div>
+        <div class="circle" style="top:190px;left:14px;width:92px;height:72px"></div>
+        <div class="hand" style="position:absolute;top:268px;left:24px;font-size:28px;color:var(--grease)">cover</div>
+        <div class="hand" style="position:absolute;top:266px;right:22px;font-size:24px;color:#e9e5da">&#9825; 2 &nbsp; &#9633; 1</div>
+        <div class="strip" style="top:300px">
+          <div class="f"><img src="../img/book/beach.jpg" alt=""><i>4</i></div>
+          <div class="f"><img src="../img/book/bow.jpg" alt=""><i>5</i></div>
+          <div class="f" style="background:#1b150e;display:grid;place-items:center;color:#6c5d4a;font:600 10px 'Archivo Narrow'">add</div>
+        </div>
+        <div style="position:absolute;top:404px;left:16px;right:16px;font:500 11.5px/1.45 'Archivo Narrow';color:#a9a397">Pinch a frame to lift it to full size. Drag along the strip to reorder. Draw a circle on any frame to make it the cover.</div>
+        <div class="tool"><span class="go">+ Add photos</span><span>Frames</span><span>Arrange</span><span>Font</span></div>
+        <div class="home" style="color:#fff"></div>
+      </div></div>
+      <figcaption><b>Batch</b>A contact sheet, marked up in grease pencil.</figcaption>
+    </figure>
+
+    <!-- Viewer -->
+    <figure>
+      <div class="ph A"><div class="scr loupe">
+        <div class="sb" style="color:#fff"><span>9:41</span><i><u></u></i></div>
+        <div style="position:absolute;top:52px;left:18px;right:18px;display:flex;justify-content:space-between;font:600 12px 'Archivo Narrow';color:#c9c3b4"><span>&times; Close</span><span>Frame 1 of 5</span><span>&middot;&middot;&middot;</span></div>
+        <div class="back" style="left:44px;right:20px;top:110px;height:170px;transform:rotate(4deg)">
+          <div class="hand">This one has to be the cover. So good.</div>
+          <div style="font:600 10.5px 'Archivo Narrow';color:#6e695e;margin-top:4px">Maya R, Oct 28</div>
+          <div class="stamp">BIG SUR, ONE AFTERNOON. FRAME 1</div>
+        </div>
+        <div class="print" style="left:20px;right:30px;top:178px;height:250px;transform:rotate(-2deg)"><img src="../img/book/shore.jpg" alt="Shoreline at Big Sur"></div>
+        <div class="flip" style="top:470px"><svg class="ic"><use href="#turn"/></svg>Swipe up to turn it over</div>
+        <div class="acts"><span><svg class="ic"><use href="#heart"/></svg>2</span><span><svg class="ic"><use href="#bubble"/></svg>1</span><span class="sp"><svg class="ic"><use href="#share"/></svg></span></div>
+        <div class="home" style="color:#fff"></div>
+      </div></div>
+      <figcaption><b>Photo viewer</b>Mid-flip: comments are written on the back.</figcaption>
+    </figure>
+
+    <!-- Friends -->
+    <figure>
+      <div class="ph A"><div class="scr blotter mail">
+        <div class="sb" style="color:#fff"><span>9:41</span><i><u></u></i></div>
+        <div class="top"><div class="who"><h4>Friends</h4><small style="color:#f1d76a">Activity (4)</small></div></div>
+        <div class="tabs" style="top:100px"><span class="on">New mail</span><span>Activity</span></div>
+        <div class="env" style="left:16px;right:16px;top:196px;height:120px">
+          <div class="peek" style="height:74px"><img src="../img/book/dock.jpg" alt=""><img src="../img/book/tahoe.jpg" alt="" style="transform:rotate(5deg)"></div>
+          <div class="post">INVERNESS<br>NOV 11</div>
+          <div class="lbl"><div class="from">from Maya R, 2 days ago</div><div class="hand">Tomales Bay kayak</div><div class="stamps"><b>3 EXP</b></div></div>
+        </div>
+        <div class="env" style="left:16px;right:16px;top:368px;height:132px;transform:rotate(-1deg)">
+          <div class="peek" style="height:74px"><img src="../img/book/peaks.jpg" alt=""><img src="../img/book/elcap.jpg" alt="" style="transform:rotate(-4deg)"></div>
+          <div class="post">LEE VINING<br>NOV 9</div>
+          <div class="lbl"><div class="from">from Theo, 4 days ago</div><div class="hand">Mono Lake sunrise</div>
+            <div class="stamps"><b>3 EXP</b><b class="r">GROUP: ADD YOURS</b></div></div>
+        </div>
+        <div class="rail"><span>Desk</span><div class="plus">+</div><span class="on">Friends</span></div>
+        <div class="home" style="color:#fff"></div>
+      </div></div>
+      <figcaption><b>Friends</b>New batches arrive as mail; group ones invite your prints.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================ B ============================ -->
+<section class="dir" id="opening">
+  <div class="dir-head">
+    <div>
+      <h2>Opening night</h2>
+      <p class="why">Treat every batch like a small show you hang for friends. Photos go full-bleed and big, titles are set huge in a condensed grotesque, and each frame gets a museum-style wall label instead of chips and icons. One ultramarine is reserved for things that are live: new activity, the number of a frame, a like.</p>
+    </div>
+    <div>
+      <h3>What changes from today</h3>
+      <ul>
+        <li><b>Desk</b> drops the pile illustration; the most recent batch hangs full width, older ones step down in size beneath it.</li>
+        <li><b>Activity</b> runs as a single blue line under your name.</li>
+        <li><b>Batch</b> opens on the cover full-bleed with the title over it; frames below hang in an uneven pair rhythm, not a uniform column.</li>
+        <li><b>Viewer</b> switches from black to the wall colour, with a placard carrying title, frame number, likes and the latest comment.</li>
+        <li><b>Friends</b> becomes a run of posters, one per friend's batch.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="row">
+    <!-- Desk -->
+    <figure>
+      <div class="ph B"><div class="scr">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="name disp">kevin</div>
+        <div class="stats"><u>3</u> batches &nbsp; <u>12</u> frames &nbsp; <u>2</u> followers &nbsp; <u>1</u> following</div>
+        <div class="ticker"><span class="d"></span>Maya R and Theo liked Big Sur</div>
+        <div class="filt"><span class="on">All</span><span>Shared</span><span>Private</span><span>Group</span></div>
+        <div class="hang" style="top:248px"><img src="../img/book/shore.jpg" alt="" style="height:140px">
+          <div class="label"><h5>Big Sur, one afternoon</h5><span class="n">5</span><span>Oct 27, Followers, 3 likes</span></div></div>
+        <div class="hang" style="top:442px;display:grid;grid-template-columns:1.2fr 1fr;gap:10px">
+          <div><img src="../img/book/stars.jpg" alt="" style="height:62px"><div class="label" style="display:block;margin-top:5px"><h5 style="font-size:13px">Joshua Tree overnight</h5>4 frames, 1 person</div></div>
+          <div><img src="../img/book/fog.jpg" alt="" style="height:62px"><div class="label" style="display:block;margin-top:5px"><h5 style="font-size:13px">Fog over the bay</h5>3 frames, only me</div></div>
+        </div>
+        <div class="nav"><span class="on">Desk</span><span class="new">New batch</span><span>Friends</span></div>
+        <div class="home" style="color:#fff"></div>
+      </div></div>
+      <figcaption><b>Desk</b>Newest batch hangs biggest; your name is the masthead.</figcaption>
+    </figure>
+
+    <!-- Batch -->
+    <figure>
+      <div class="ph B"><div class="scr">
+        <div class="hero"><img class="cover" src="../img/book/shore.jpg" alt="">
+          <div class="sb" style="color:#fff"><span>9:41</span><i><u></u></i></div>
+          <div class="tb" style="top:50px"><b>&lsaquo; Desk</b><span>Followers &#9662; &nbsp; &middot;&middot;&middot;</span></div>
+          <h4 class="disp">Big Sur, one afternoon</h4></div>
+        <div class="wl"><span><b>kevin</b>, October 27, 2026</span><span>Highway 1, 5 frames</span></div>
+        <div style="position:absolute;top:362px;left:16px;font-size:12px;color:var(--ultra);font-weight:600">+ Add a description</div>
+        <div class="pair"><div><img src="../img/book/coast.jpg" alt="" style="height:120px"><small>2</small></div><div><img src="../img/book/road.jpg" alt="" style="height:88px"><small>3 &nbsp;&#9825; 2</small></div></div>
+        <div class="bar"><span class="go">+ Add photos</span><span>Frames</span><span>Arrange</span><span>Font</span></div>
+        <div class="home"></div>
+      </div></div>
+      <figcaption><b>Batch</b>The cover is the poster; frames hang in pairs.</figcaption>
+    </figure>
+
+    <!-- Viewer -->
+    <figure>
+      <div class="ph B"><div class="scr room">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="x"><span>&times; Close</span><span>&middot;&middot;&middot;</span></div>
+        <div class="frame"><img src="../img/book/shore.jpg" alt="Shoreline at Big Sur"></div>
+        <div class="placard"><h5>Big Sur, one afternoon</h5><span class="num">1/5</span><span>kevin, Oct 27, 2026. Cover</span></div>
+        <div class="say"><b>Maya R</b> This one has to be the cover. So good.</div>
+        <div class="vacts"><span class="on"><svg class="ic"><use href="#heart"/></svg>2</span><span><svg class="ic"><use href="#bubble"/></svg>1</span><span><svg class="ic"><use href="#share"/></svg>Share</span></div>
+        <div class="home"></div>
+      </div></div>
+      <figcaption><b>Photo viewer</b>On the wall, with a placard instead of a black void.</figcaption>
+    </figure>
+
+    <!-- Friends -->
+    <figure>
+      <div class="ph B"><div class="scr">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="name disp" style="font-size:64px;top:62px">Friends</div>
+        <div class="filt" style="top:128px"><span class="on">Batches</span><span>Activity 4</span><span style="margin-left:auto;color:var(--ultra);font-weight:600">Find people</span></div>
+        <div class="inv" style="top:160px"><div class="poster"><img class="cover" src="../img/book/dock.jpg" alt=""><span class="by">Maya R, 2 days ago</span><h4 class="disp">Tomales Bay kayak</h4></div>
+          <div class="meta"><span>Inverness, Nov 11. 3 frames</span></div></div>
+        <div class="inv" style="top:392px"><div class="poster" style="height:150px"><img class="cover" src="../img/book/peaks.jpg" alt=""><span class="by">Theo, 4 days ago</span><h4 class="disp" style="font-size:40px">Mono Lake sunrise</h4></div>
+          <div class="meta"><span>Lee Vining, Nov 9. 3 frames</span><b>Group: add yours</b></div></div>
+        <div class="nav"><span>Desk</span><span class="new">New batch</span><span class="on">Friends</span></div>
+        <div class="home" style="color:#fff"></div>
+      </div></div>
+      <figcaption><b>Friends</b>One poster per batch; group batches say you can add.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============================ C ============================ -->
+<section class="dir" id="fog">
+  <div class="dir-head">
+    <div>
+      <h2>Fog</h2>
+      <p class="why">The quietest version: the app recedes so the photos are the only thing with colour. Borders, pills and the amber accent go; a soft fog grey holds everything, type is a light reading serif, and the pile survives only as two paper edges behind each cover. Built for people who open the app to look, not to manage.</p>
+    </div>
+    <div>
+      <h3>What changes from today</h3>
+      <ul>
+        <li><b>Desk</b> is one calm column; privacy, frame count and date are plain small text, not coloured chips.</li>
+        <li><b>Activity</b> is a single italic sentence under the filters.</li>
+        <li><b>Batch</b> loses the print border and frame numbers; tools collapse into one dark pill (Add photos, then Frames, Arrange, Font).</li>
+        <li><b>Viewer</b> uses a paler fog instead of black, and shows the latest comment as a caption under the photo.</li>
+        <li><b>Friends</b> drops cards entirely; each batch is a name line and a two-photo glimpse.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="row">
+    <!-- Desk -->
+    <figure>
+      <div class="ph C"><div class="scr">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="reveal ui" aria-hidden="true">
+          <div class="fol">2 followers &middot; 1 following</div>
+          <div class="quiet"><span class="on">All</span><span>Shared</span><span>Private</span><span>Group</span></div>
+        </div>
+        <div class="feed" data-reveal>
+          <h4 class="me">kevin</h4>
+          <div class="note">Maya and Theo liked <b>Big Sur</b>, and Maya left a comment.</div>
+          <div class="item"><div class="pile"><img src="../img/book/shore.jpg" alt="" style="height:150px"></div>
+            <div class="cap"><h5>Big Sur, one afternoon</h5><small>&#9825; 3</small></div><div class="cap2">5 frames, Oct 27. Followers</div></div>
+          <div class="item duo2">
+            <div><div class="pile"><img src="../img/book/dunes.jpg" alt="" style="height:72px"></div><div class="cap"><h5 style="font-size:14px">Joshua Tree overnight</h5></div><div class="cap2">4, with 1 person</div></div>
+            <div><div class="pile"><img src="../img/book/fog.jpg" alt="" style="height:72px"></div><div class="cap"><h5 style="font-size:14px">Fog over the bay</h5></div><div class="cap2">3, only you</div></div>
+          </div>
+          <div class="item"><div class="pile"><img src="../img/book/elcap.jpg" alt="" style="height:130px"></div>
+            <div class="cap"><h5>Yosemite, first snow</h5><small>&#9825; 5</small></div><div class="cap2">8 frames, Oct 2. Followers</div></div>
+          <div class="item duo2">
+            <div><div class="pile"><img src="../img/book/redwood.jpg" alt="" style="height:72px"></div><div class="cap"><h5 style="font-size:14px">Muir Woods</h5></div><div class="cap2">6, only you</div></div>
+            <div><div class="pile"><img src="../img/book/stars.jpg" alt="" style="height:72px"></div><div class="cap"><h5 style="font-size:14px">Night sky, Mono</h5></div><div class="cap2">2, with 2 people</div></div>
+          </div>
+        </div>
+        <div class="dock"><span class="on">Desk</span><span class="add">+</span><span>Friends</span></div>
+        <div class="home"></div>
+      </div></div>
+      <figcaption><b>Desk</b>Just your name at rest. Scroll a little and followers and filters slide in, centred. Try it.</figcaption>
+    </figure>
+
+    <!-- Batch -->
+    <figure>
+      <div class="ph C"><div class="scr">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="bt"><span>&lsaquo; Desk</span><b>Followers</b><span>&middot;&middot;&middot;</span></div>
+        <div class="ttl"><h4>Big Sur, one afternoon</h4><p>October 27, 2026. Highway 1. 5 frames</p><em>Add a description</em></div>
+        <div class="fr" style="top:210px"><img src="../img/book/shore.jpg" alt="" style="height:170px"><small><span>Cover</span><span>&#9825; 2 &nbsp; 1 comment</span></small></div>
+        <div class="fr" style="top:412px;display:grid;grid-template-columns:1fr 1fr;gap:10px"><img src="../img/book/coast.jpg" alt="" style="height:170px"><img src="../img/book/road.jpg" alt="" style="height:170px"></div>
+        <div class="addtxt">+ Add photos <span>Frames</span><span>Arrange</span><span>Font</span></div>
+        <div class="home"></div>
+      </div></div>
+      <figcaption><b>Batch</b>No frames, no numbers; one pill for every tool.</figcaption>
+    </figure>
+
+    <!-- Viewer -->
+    <figure>
+      <div class="ph C"><div class="scr still">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="tap"><span>Close</span><span>1 of 5</span><span>&middot;&middot;&middot;</span></div>
+        <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+        <div class="ph-img"><img src="../img/book/shore.jpg" alt="Shoreline at Big Sur"></div>
+        <div class="cm" data-cycle>
+          <div class="pips"><i class="on"></i><i></i><i></i></div>
+          <div class="c on"><p>&ldquo;This one has to be the cover. So good.&rdquo;</p><small>Maya R</small></div>
+          <div class="c"><p>&ldquo;The light on the water. Unreal.&rdquo;</p><small>Theo</small></div>
+          <div class="c"><p>&ldquo;Highway 1 never misses.&rdquo;</p><small>Ana</small></div>
+        </div>
+        <div class="va"><span class="on"><svg class="ic"><use href="#heart"/></svg>2</span><span><svg class="ic"><use href="#bubble"/></svg>3</span><span class="sp"><svg class="ic"><use href="#share"/></svg></span></div>
+        <div class="home"></div>
+      </div></div>
+      <figcaption><b>Photo viewer</b>Pale ground; the comments take turns as the caption. Tap hides it all.</figcaption>
+    </figure>
+
+    <!-- Friends -->
+    <figure>
+      <div class="ph C"><div class="scr">
+        <div class="sb"><span>9:41</span><i><u></u></i></div>
+        <div class="h"><h4>Friends</h4><span class="ui">Find people</span></div>
+        <div class="quiet ui"><span class="on">Batches</span><span>Activity, 4 new</span></div>
+        <div class="fd" style="top:140px"><div class="by"><span><b>Maya R</b> 2 days ago</span><span>Inverness</span></div>
+          <div class="duo"><img src="../img/book/dock.jpg" alt=""><img src="../img/book/tahoe.jpg" alt=""></div>
+          <div class="cap"><h5>Tomales Bay kayak</h5><small>3 frames</small></div></div>
+        <div class="fd" style="top:340px"><div class="by"><span><b>Theo</b> 4 days ago</span><span>Lee Vining</span></div>
+          <div class="duo"><img src="../img/book/peaks.jpg" alt=""><img src="../img/book/falls.jpg" alt=""></div>
+          <div class="cap"><h5>Mono Lake sunrise</h5><small style="color:var(--glass)">Group, you can add</small></div></div>
+        <div class="dock"><span>Desk</span><span class="add">+</span><span class="on">Friends</span></div>
+        <div class="home"></div>
+      </div></div>
+      <figcaption><b>Friends</b>A name, two photos, a title. Nothing else.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<footer class="foot">Static mockups for review. Nothing here changes the app; layout values are approximate and meant for comparing directions, not for implementation.</footer>
+<script>
+document.querySelectorAll('[data-reveal]').forEach(feed => {
+  const scr = feed.parentElement, bar = scr.querySelector('.reveal');
+  feed.addEventListener('scroll', () => {
+    const on = feed.scrollTop > 24;
+    bar.classList.toggle('show', on); bar.setAttribute('aria-hidden', !on);
+  }, {passive: true});
+});
+document.querySelectorAll('[data-cycle]').forEach(box => {
+  const items = [...box.querySelectorAll('.c')], pips = [...box.querySelectorAll('.pips i')];
+  let i = 0;
+  setInterval(() => {
+    const prev = items[i];
+    prev.classList.remove('on'); prev.classList.add('out');
+    setTimeout(() => prev.classList.remove('out'), 600);
+    pips[i].classList.remove('on');
+    i = (i + 1) % items.length;
+    items[i].classList.add('on');
+    void pips[i].offsetWidth; pips[i].classList.add('on');
+  }, 1600);
+});
+</script>
+</body>
+</html>

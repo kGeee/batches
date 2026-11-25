@@ -21,13 +21,14 @@ struct GalleryView: View {
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.tiltedPiles) private var tiltedPiles
     @State private var showFrames = false
+    @State private var showAddPhotos = false
     @State private var showShare = false
     /// Making Instagram and TikTok posts: from the whole batch, or one photo.
     @State private var postingSocial: SocialPosting?
     @State private var renaming = false
     @State private var renameDraft = ""
     @State private var showReorder = false
-    @State private var showFont = false
+    @State private var showDate = false
     @State private var showDescription = false
     /// Likes and comment counts by photo; nil while loading, or when they can't be loaded.
     @State private var reactions: [UUID: PhotoReactions]?
@@ -36,9 +37,6 @@ struct GalleryView: View {
     @State private var arrangingBoard = false
     @State private var reporting: ReportTarget?
     @State private var confirmingBlock = false
-    @State private var picked: [PhotosPickerItem] = []
-    @State private var importing = false
-    @State private var google = GooglePhotosPicking()
     @State private var removing: Photo?
     @State private var viewerPhoto: Photo?
     @State private var editingPhoto: Photo?
@@ -98,11 +96,7 @@ struct GalleryView: View {
                     .offset(y: headerPull * 0.9)
                 }
                 if showsDock {
-                    VStack(spacing: 10) {
-                        GooglePhotosStatus(picking: google).padding(.horizontal, 16)
-                        dock
-                    }
-                    .animation(.snappy, value: google.stage)
+                    dock
                         .opacity(appeared ? 1 - pullProgress : 0)
                         .frame(maxHeight: .infinity, alignment: .bottom)
                 }
@@ -122,6 +116,15 @@ struct GalleryView: View {
         .sensoryFeedback(.selection, trigger: collection.coverPhotoID)
         .sensoryFeedback(.impact(weight: .light), trigger: pullDistance > PullToDismiss.threshold) { _, past in past }
         .accessibilityAction(.escape, close)   // VoiceOver's two-finger scrub
+        .sheet(isPresented: $showAddPhotos) {
+            AddPhotosSheet(collection: collection) { photos in
+                if isOwner {
+                    withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
+                } else {
+                    await model.contribute(photos, to: collection.id)
+                }
+            }
+        }
         .sheet(isPresented: $showFrames) {
             FramePickerSheet(frame: Binding(get: { collection.frame }, set: { model.setFrame($0, for: collection.id) }),
                              boardOn: Binding(get: { collection.board?.isOn == true }, set: { model.setBoardOn($0, for: collection.id) }),
@@ -134,9 +137,11 @@ struct GalleryView: View {
                 .environment(\.colorScheme, systemScheme)
         }
         .sheet(isPresented: $showReorder) { ReorderPhotosSheet(collectionID: collection.id) }
-        .sheet(isPresented: $showFont) {
-            BatchFontSheet(title: collection.title, current: collection.font) { model.setFont($0, for: collection.id) }
-                .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showDate) {
+            BatchDateSheet(current: collection.shotOn ?? collection.photos.compactMap(\.capturedAt).min() ?? .now) {
+                model.setDate($0, for: collection.id)
+            }
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showDescription) {
             BatchDescriptionSheet(current: collection.description) { model.setDescription($0, for: collection.id) }
@@ -162,20 +167,29 @@ struct GalleryView: View {
                 .environment(\.colorScheme, systemScheme)
         }
         .fullScreenCover(item: $viewerPhoto) { photo in
-            // Just the photo you tapped: no paging sideways through the rest of the pile.
-            FullFrameViewer(photos: [photo], start: photo, coverID: collection.coverPhotoID,
-                            onEdit: canEdit(photo) ? { edit($0) } : nil,
+            // Opens on the photo you tapped; swipe sideways through the rest of the batch.
+            FullFrameViewer(photos: collection.photos, start: photo, coverID: collection.coverPhotoID,
+                            onEdit: { edit($0) },
                             onSetCover: isOwner ? { model.setCover($0, in: collection.id) } : nil,
-                            onRemove: canRemove(photo) ? { remove($0) } : nil,
+                            onRemove: { remove($0) },
                             shareLink: { AppModel.link(to: collection, photo: $0) }, shareTitle: collection.title,
                             onShareBatch: isOwner && !collection.isShared ? { openShareSettings() } : nil,
-                            socialBatch: canPost(photo) ? collection : nil,
-                            onReport: canReport(photo) ? { report($0) } : nil,
+                            socialBatch: collection,
+                            onReport: { report($0) },
                             captionFont: collection.font,
                             reactions: reactions,
                             onLike: reactions == nil ? nil : { like($0) },
                             commentsBatch: reactions == nil ? nil : collection,
-                            canTag: canTag(photo),
+                            canTag: true,
+                            allows: { photo, action in
+                                switch action {
+                                case .edit: canEdit(photo)
+                                case .remove: canRemove(photo)
+                                case .report: canReport(photo)
+                                case .tag: canTag(photo)
+                                case .post: canPost(photo)
+                                }
+                            },
                             onOpenUser: { user in
                                 viewerPhoto = nil
                                 Task {
@@ -208,21 +222,6 @@ struct GalleryView: View {
                 Text("It leaves the batch for everyone. \(adder.displayName) still has the original.")
             } else {
                 Text("It stays in your Photos library and on this phone.")
-            }
-        }
-        .googlePhotosAlert(google)
-        .onChange(of: picked) { _, items in
-            guard !items.isEmpty else { return }
-            importing = true
-            Task {
-                let photos = await PhotoImport.photos(from: items, collectionID: collection.id)
-                if isOwner {
-                    withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
-                } else {
-                    await model.contribute(photos, to: collection.id)
-                }
-                picked = []
-                importing = false
             }
         }
         .fullScreenCover(item: $editingPhoto) { photo in
@@ -297,10 +296,7 @@ struct GalleryView: View {
 
     @ViewBuilder
     private func photoMenu(_ photo: Photo) -> some View {
-        Button("View", systemImage: "arrow.up.left.and.arrow.down.right") { viewerPhoto = photo }
         if let mine = reactions?[photo.id] {
-            Button(mine.likedByMe ? "Unlike" : "Like", systemImage: mine.likedByMe ? "heart.slash" : "heart") { like(photo) }
-            Button("Comments", systemImage: "bubble.left") { commentsPhoto = photo }
             if canTag(photo) || !mine.tags.isEmpty {
                 Button(canTag(photo) ? "Tag people" : "Tagged people", systemImage: "tag") { tagsPhoto = photo }
             }
@@ -348,24 +344,25 @@ struct GalleryView: View {
             if isOwner {
                 // Says who can see the batch, and opens the sheet that changes it.
                 Button { showShare = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: collection.visibility.symbol).font(.subheadline.weight(.semibold))
+                    HStack(spacing: 4) {
                         // Once the title is up here it needs the room.
-                        if !titleScrolledAway {
-                            Text(collection.audienceLabel).font(.subheadline.weight(.semibold)).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                        if titleScrolledAway {
+                            Image(systemName: collection.visibility.symbol).font(.subheadline)
+                        } else {
+                            Text(collection.audienceLabel).font(.subheadline.weight(.medium)).lineLimit(1)
+                            Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
                         }
                     }
+                    .foregroundStyle(collection.backdrop.neutralControls ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                     .fixedSize()
-                    .padding(.horizontal, 13)
                     .frame(minWidth: 38, minHeight: 38)
-                    .background(.foreground.opacity(0.1), in: Capsule())
-                    .contentShape(Capsule())
+                    .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Share, \(collection.visibility.title)")
                 Menu {
                     Button("Rename", systemImage: "pencil", action: startRename)
                     Button("Description", systemImage: "text.alignleft") { showDescription = true }
+                    Button("Date", systemImage: "calendar") { showDate = true }
                     Button("Reorder photos", systemImage: "arrow.up.arrow.down") { showReorder = true }
                         .disabled(collection.photos.count < 2)
                     Button("Post to Instagram or TikTok", systemImage: "square.and.arrow.up.on.square") {
@@ -413,7 +410,7 @@ struct GalleryView: View {
     /// The pile's title page: what it is, where and when, and whose.
     private var intro: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(collection.title).batchTitle(collection.font, .largeTitle, weight: .bold)
+            Text(collection.title).batchTitle(collection.font, .largeTitle, weight: .light)
                 .fixedSize(horizontal: false, vertical: true)
                 // Your own pile's title is also the quickest way to rename it.
                 .onTapGesture { if isOwner { startRename() } }
@@ -428,11 +425,16 @@ struct GalleryView: View {
                     .accessibilityAddTraits(isOwner ? .isButton : [])
                     .accessibilityHint(isOwner ? "Edits the description" : "")
             } else if isOwner {
-                Button("Add a description", systemImage: "plus") { showDescription = true }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tint)
+                Button("Add a description") { showDescription = true }
+                    .font(.system(.callout, design: .serif).italic())
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
             }
             Text(introLine).metaStyle(.caption)
+                // Your own batch's date is a tap away from changing.
+                .onTapGesture { if isOwner { showDate = true } }
+                .accessibilityAddTraits(isOwner ? .isButton : [])
+                .accessibilityHint(isOwner ? "Changes the date" : "")
             if !isOwner, let owner = collection.owner {
                 Button { onOpenOwner?(owner) } label: {
                     HStack(spacing: 8) {
@@ -467,11 +469,9 @@ struct GalleryView: View {
             }
             Text(groupLine(people)).font(.footnote.weight(.medium)).lineLimit(1)
             Spacer(minLength: 4)
-            Label("Group", systemImage: "plus.rectangle.on.rectangle")
-                .font(.caption2.weight(.semibold))
+            Text(collection.canAdd || isOwner ? "Group, you can add" : "Group")
+                .font(.caption)
                 .foregroundStyle(Color.strewnAccent)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Color.strewnAccent.opacity(0.12), in: Capsule())
         }
         .accessibilityElement(children: .combine)
     }
@@ -519,63 +519,45 @@ struct GalleryView: View {
         .accessibilityHidden(true)
     }
 
-    private func importFromGoogle() {
-        Task {
-            let photos = await google.run(collectionID: collection.id)
-            guard !photos.isEmpty else { return }
-            importing = true
-            if isOwner {
-                withAnimation(.snappy) { model.addPhotos(photos, to: collection.id) }
-            } else {
-                await model.contribute(photos, to: collection.id)
-            }
-            importing = false
-        }
-    }
-
-    /// What you do to the batch, in reach and by name. A friend who can add photos gets just that.
+    /// What you do to the batch, in one dark pill: Add photos first, then the tools by name.
+    /// A friend who can add photos gets just that.
     private var dock: some View {
-        let neutral = collection.backdrop.neutralControls
-        return HStack(spacing: 2) {
-            PhotoSourcePicker(selection: $picked, onGooglePhotos: importFromGoogle) {
-                HStack(spacing: 7) {
-                    if importing || google.isRunning { ProgressView().tint(neutral ? Color(uiColor: .systemBackground) : Color.onAccent) }
-                    else { Image(systemName: "plus").font(.body.weight(.bold)) }
-                    Text("Add photos").font(.subheadline.weight(.semibold)).lineLimit(1)
+        HStack(spacing: 0) {
+            // Opens the same suggestions as New batch, starting with what's from around this batch.
+            Button { showAddPhotos = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus").font(.subheadline.weight(.medium))
+                    Text("Add photos").font(.subheadline.weight(.medium)).lineLimit(1)
                 }
                 .fixedSize()
-                .foregroundStyle(neutral ? Color(uiColor: .systemBackground) : Color.onAccent)
-                .padding(.horizontal, 18)
-                .frame(height: 48)
-                .background(neutral ? Color.primary : Color.strewnAccent, in: Capsule())
+                .padding(.horizontal, 12)
+                .frame(minHeight: 46)
+                .contentShape(Rectangle())
             }
-            .disabled(importing || google.isRunning)
+            .buttonStyle(.plain)
             if isOwner {
-                dockButton("Frames", "square.inset.filled") { showFrames = true }
+                dockButton("Frames") { showFrames = true }
                 if frame.kind != .filmStrip {
-                    dockButton("Arrange", "hand.draw") { arrangingBoard = true }
+                    dockButton("Arrange") { arrangingBoard = true }
                         .disabled(collection.photos.isEmpty)
                 }
-                dockButton("Font", "textformat") { showFont = true }
             }
         }
-        .padding(7)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.foreground.opacity(0.06), lineWidth: 1))
-        .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
+        .foregroundStyle(Color.mat)
+        .padding(.horizontal, 8)
+        .background(Color.primary, in: Capsule())
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
         .padding(.horizontal, 16)
         .padding(.bottom, 6)
     }
 
-    private func dockButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+    private func dockButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(height: 22)
-                Text(title).font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .contentShape(Rectangle())
+            Text(title).font(.subheadline)
+                .opacity(0.65)
+                .padding(.horizontal, 9)
+                .frame(minHeight: 46)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -585,7 +567,7 @@ struct GalleryView: View {
         if let date = collection.shotOn { parts.append(date.formatted(.dateTime.month(.wide).day().year())) }
         if let place = collection.place { parts.append(place) }
         parts.append(collection.photos.count.counted("frame"))
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ". ")
     }
 
     private var canAdd: Bool { isOwner || collection.canAdd }
@@ -674,11 +656,10 @@ struct GalleryView: View {
 
     private func headerIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.body.weight(.semibold))
+            .font(.body)
+            .foregroundStyle(.secondary)
             .frame(width: 38, height: 38)
-            // Follows the wall's text color, so it shows on light, dark and desk walls alike.
-            .background(.foreground.opacity(0.1), in: Circle())
-            .contentShape(Circle())
+            .contentShape(Rectangle())
     }
 
     private var subtitle: String {
@@ -731,23 +712,13 @@ struct PhotoMetaRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(exifLine).metaStyle().lineLimit(1)
             if photo.id == collection.cover?.id {
-                Label("Cover", systemImage: "star.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.strewnAccent)
-                    .labelStyle(TightLabel())
-                    .transition(.scale.combined(with: .opacity))
+                Text("Cover").metaStyle()
+                    .transition(.opacity)
             }
             if let tags = reactions?.tags, !tags.isEmpty, let onTags {
                 Button(action: onTags) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "tag.fill").font(.system(size: 10, weight: .semibold))
-                        Text(tagSummary(tags)).font(.caption2.weight(.semibold)).lineLimit(1)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.foreground.opacity(0.08), in: Capsule())
+                    Text(tagSummary(tags)).metaStyle().lineLimit(1)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Tagged: \(tagSummary(tags))")
@@ -780,7 +751,7 @@ struct PhotoMetaRow: View {
     }
 
     private func tagSummary(_ tags: [PhotoTag]) -> String {
-        let names = tags.compactMap { $0.user.map { "@\($0.handle)" } }
+        let names = tags.compactMap { $0.user.map { "with @\($0.handle)" } }
         guard let first = names.first else { return tags.count.counted("person", plural: "people") }
         return tags.count > 1 ? "\(first) +\(tags.count - 1)" : first
     }
@@ -788,11 +759,11 @@ struct PhotoMetaRow: View {
     private func reaction(_ count: Int, _ symbol: String, on: Bool, action: (() -> Void)?) -> some View {
         Button { action?() } label: {
             HStack(spacing: 4) {
-                Image(systemName: symbol).font(.footnote.weight(.semibold))
-                if count > 0 { Text("\(count)").font(.caption.weight(.semibold).monospacedDigit()).contentTransition(.numericText()) }
+                Image(systemName: symbol).font(.footnote)
+                if count > 0 { Text("\(count)").font(.caption.monospacedDigit()).contentTransition(.numericText()) }
             }
             .foregroundStyle(on ? AnyShapeStyle(Color.strewnAccent) : AnyShapeStyle(.secondary))
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 5)
             .frame(minWidth: 34, minHeight: 30)
             .contentShape(Rectangle())
         }
@@ -800,20 +771,6 @@ struct PhotoMetaRow: View {
         .disabled(action == nil)
     }
 
-    private struct TightLabel: LabelStyle {
-        func makeBody(configuration: Configuration) -> some View {
-            HStack(spacing: 3) { configuration.icon; configuration.title }
-        }
-    }
-
-    private var exifLine: String {
-        var parts = [String(format: "%02d", index + 1)]
-        if let f = photo.exif?.aperture { parts.append("ƒ\(f.formatted())") }
-        if let s = photo.exif?.shutter { parts.append(s) }
-        if let iso = photo.exif?.iso { parts.append("ISO \(iso)") }
-        if photo.edit != nil { parts.append("edited") }
-        return parts.joined(separator: " · ")
-    }
 }
 
 /// Two-column masonry: each photo keeps its own height, so nothing is cropped to a square.
@@ -914,4 +871,28 @@ private struct ReorderPhotosSheet: View {
 private struct SocialPosting: Identifiable {
     let id = UUID()
     let single: Photo?
+}
+
+/// Changes when a batch says it was: a calendar, with today and the photos' own date to hand.
+private struct BatchDateSheet: View {
+    let current: Date
+    var onSave: (Date) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var date: Date
+
+    init(current: Date, onSave: @escaping (Date) -> Void) {
+        self.current = current
+        self.onSave = onSave
+        _date = State(initialValue: current)
+    }
+
+    var body: some View {
+        PaperSheet(title: "Date", onCancel: { dismiss() }, confirmTitle: "Save",
+                   confirmEnabled: !Calendar.current.isDate(date, inSameDayAs: current),
+                   onConfirm: { onSave(date); dismiss() }) {
+            DatePicker("Date", selection: $date, in: ...Date.now.addingTimeInterval(86_400), displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+        }
+    }
 }

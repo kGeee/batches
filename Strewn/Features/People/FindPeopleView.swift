@@ -10,37 +10,56 @@ struct FindPeopleView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Find people").titleStyle(.largeTitle)
+                    .accessibilityAddTraits(.isHeader)
+                // A search line on the fog, not a box: a hairline that darkens while you type.
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Name or @handle", text: $query)
+                        .font(.system(.title3, design: .serif))
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .focused($searching)
                         .submitLabel(.search)
                     if !query.isEmpty {
-                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Clear search")
                     }
                 }
-                .paperField(focused: searching)
+                .padding(.vertical, 8)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(Color.primary.opacity(searching ? 0.5 : 0.15)).frame(height: 1)
+                }
+                .animation(.easeOut(duration: 0.2), value: searching)
 
-                if results.isEmpty && !query.isEmpty {
-                    ContentUnavailableView.search(text: query).padding(.top, 30)
-                } else if !results.isEmpty {
-                    PaperSection {
+                if results.isEmpty {
+                    Text(query.isEmpty ? "Look for a friend by their name or @handle." : "No one called \u{201C}\(query)\u{201D} yet.")
+                        .font(.system(.callout, design: .serif).italic())
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                } else {
+                    VStack(spacing: 0) {
                         ForEach(Array(results.enumerated()), id: \.element.id) { index, user in
-                            if index > 0 { PaperDivider(inset: 66) }
+                            if index > 0 { Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1) }
                             PeopleListRow(user: user)
                         }
                     }
                 }
             }
-            .padding(18)
+            .padding(.horizontal, 20)
+            .padding(.top, 4)
+            .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
+        // Room under the last person, so the tab bar never sits over them.
+        .contentMargins(.bottom, 110, for: .scrollContent)
         .background(DeskMatBackground())
-        .paperNavigationTitle("Find people")
+        .navigationTitle("Find people")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar { ToolbarItem(placement: .principal) { Text("") } }
         .task(id: query) {
             if !query.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }
@@ -58,10 +77,10 @@ struct PeopleListRow: View {
         HStack(spacing: 8) {
             NavigationLink(value: user) {
                 HStack(spacing: 12) {
-                    AvatarView(user: user, size: 40)
+                    AvatarView(user: user, size: 34)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(user.displayName).font(.body.weight(.semibold)).foregroundStyle(.primary)
-                        Text("@\(user.handle)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                        Text(user.displayName).font(.body.weight(.medium)).foregroundStyle(.primary)
+                        Text("@\(user.handle)").font(.footnote).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 4)
                 }
@@ -70,8 +89,7 @@ struct PeopleListRow: View {
             .buttonStyle(.plain)
             if user.id != model.me?.id { FollowButton(user: user) }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
     }
 }
 
@@ -81,10 +99,10 @@ struct PersonRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AvatarView(user: user, size: 40)
+            AvatarView(user: user, size: 34)
             VStack(alignment: .leading, spacing: 1) {
-                Text(user.displayName).font(.body.weight(.semibold))
-                Text("@\(user.handle)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text(user.displayName).font(.body.weight(.medium))
+                Text("@\(user.handle)").font(.footnote).foregroundStyle(.secondary)
             }
             Spacer()
             trailing

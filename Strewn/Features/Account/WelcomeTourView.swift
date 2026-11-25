@@ -152,7 +152,7 @@ private struct TourPageView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(page.kicker).metaStyle(.caption)
                         Text(page.title)
-                            .titleStyle(.title, weight: .bold)
+                            .titleStyle(.title, weight: .regular)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
                         Text(page.body)

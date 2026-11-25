@@ -3,10 +3,11 @@ import SwiftUI
 /// How a pile's photos are framed in the gallery. Chosen by the owner and stored with the
 /// collection, so every viewer sees the pile the same way.
 struct FrameStyle: Hashable, Codable {
-    var kind: Kind = .whiteBorder
+    /// New batches start borderless on the fog; saved batches keep what they were made with.
+    var kind: Kind = .none
     /// Base border thickness in points. Each kind scales it (polaroid uses a deeper bottom).
     var borderWidth: CGFloat = 14
-    var wall: Wall = .light
+    var wall: Wall = .desk
     var layout: Layout = .single
     /// Film strip only: which way the roll runs when opened. Optional so older saved
     /// frames decode; nil means down.

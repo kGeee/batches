@@ -2,21 +2,26 @@ import SwiftUI
 
 extension Color {
     /// Print paper: stays light in dark mode because prints are physical objects.
-    static let paper = Color(red: 0.984, green: 0.980, blue: 0.965)
+    static let paper = Color(red: 0.965, green: 0.969, blue: 0.957)
     static let film = Color(white: 0.08)
     static let filmEdge = Color(red: 0.89, green: 0.60, blue: 0.23)
-    /// The one accent, a darkroom amber: deep on light surfaces, bright on the camera and
-    /// editor, which are always dark.
-    static let strewnAccent = Color(light: Color(red: 0.70, green: 0.42, blue: 0.08),
-                                    dark: Color(red: 0.95, green: 0.71, blue: 0.30))
-    /// Undyed linen: warm oatmeal by day, a deep brown-grey at night.
-    static let mat = Color(light: Color(red: 0.89, green: 0.86, blue: 0.80), dark: Color(red: 0.15, green: 0.14, blue: 0.12))
+    /// The one accent, a sea-glass green kept for the few things that are yours to act on:
+    /// deep on the fog, pale at night and on the camera and editor, which are always dark.
+    static let strewnAccent = Color(light: Color(red: 0.271, green: 0.412, blue: 0.373),
+                                    dark: Color(red: 0.616, green: 0.749, blue: 0.706))
+    /// Fog: a soft grey-green that holds everything, so the photos are the only colour.
+    static let mat = Color(light: Color(red: 0.890, green: 0.898, blue: 0.878), dark: Color(red: 0.106, green: 0.114, blue: 0.110))
+    /// Behind a photo opened full screen: a shade deeper than the desk, so the photo lifts off it.
+    static let viewerFog = Color(light: Color(red: 0.831, green: 0.843, blue: 0.816), dark: Color(red: 0.071, green: 0.078, blue: 0.075))
+    /// The paper edges that peek out behind a cover, nearest first.
+    static let fogEdge = Color(light: Color(red: 0.745, green: 0.761, blue: 0.729), dark: Color(red: 0.200, green: 0.212, blue: 0.204))
+    static let fogEdgeFar = Color(light: Color(red: 0.808, green: 0.820, blue: 0.792), dark: Color(red: 0.165, green: 0.176, blue: 0.169))
 
     /// Text and icons on the accent. The accent is bright amber at night, where white washes out.
     static let onAccent = Color(light: .white, dark: Color(white: 0.1))
     /// A panel on the mat, such as the account rows. Paper by day; at night paper would sit
     /// white text on a near-white panel, so it's a lift of the mat instead.
-    static let card = Color(light: Color(red: 0.984, green: 0.980, blue: 0.965).opacity(0.7), dark: Color.white.opacity(0.08))
+    static let card = Color(light: Color(red: 0.843, green: 0.855, blue: 0.827), dark: Color.white.opacity(0.07))
 
     init(light: Color, dark: Color) {
         self.init(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light) })
@@ -30,9 +35,9 @@ extension Int {
 }
 
 extension View {
-    /// Titles are set in the serif, like a caption on a print; metadata stays monospaced,
-    /// like the edge printing on film.
-    func titleStyle(_ style: Font.TextStyle = .title3, weight: Font.Weight = .semibold) -> some View {
+    /// Titles are set in a light reading serif, like a caption on a print; metadata is plain
+    /// small text underneath.
+    func titleStyle(_ style: Font.TextStyle = .title3, weight: Font.Weight = .regular) -> some View {
         font(.system(style, design: .serif, weight: weight))
     }
 
@@ -42,18 +47,14 @@ extension View {
     }
 
     func metaStyle(_ style: Font.TextStyle = .caption2) -> some View {
-        font(.system(style, design: .monospaced)).foregroundStyle(.secondary)
+        font(.system(style)).foregroundStyle(.secondary)
     }
 }
 
-/// The linen the piles sit on: a warm cloth a shade darker than the prints, so white
-/// borders still read. The weave is a small tile drawn once and repeated by the GPU, so
-/// animations over it cost nothing extra.
+/// The fog everything sits on: one flat, quiet grey, so nothing competes with the photos.
 struct DeskMatBackground: View {
     var body: some View {
-        Color.mat
-            .overlay(Image(uiImage: LinenTile.image).resizable(resizingMode: .tile))
-            .ignoresSafeArea()
+        Color.mat.ignoresSafeArea()
     }
 }
 

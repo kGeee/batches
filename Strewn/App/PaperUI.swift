@@ -292,20 +292,22 @@ struct PaperSegmented<Value: Hashable>: View {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) { selection = option.value }
                 } label: {
+                    // Plain words: the chosen one in ink with a hairline under it.
                     Text(option.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(selected ? .semibold : .regular))
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .foregroundStyle(selected ? Color.onAccent : Color.primary)
-                        .background(selected ? Color.strewnAccent : Color.clear, in: Capsule())
-                        .contentShape(Capsule())
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .padding(.vertical, 6)
+                        .overlay(alignment: .bottom) {
+                            Rectangle().fill(Color.primary).frame(height: 1).opacity(selected ? 1 : 0)
+                        }
+                        .frame(minHeight: 34)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .padding(4)
-        .background(Color.card, in: Capsule())
     }
 }
 

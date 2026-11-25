@@ -282,6 +282,8 @@ struct SmartBatchReviewView: View {
     let place: String?
     /// What's left of the 60-photo batch after picks from other places (Google Photos).
     var limit = 60
+    /// The button that takes the picks: "Use these" in New batch, "Add to batch" for one that exists.
+    var useTitle = "Use these"
     var onUse: ([PHAsset]) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -468,7 +470,7 @@ struct SmartBatchReviewView: View {
                 onUse(assets.filter { selected.contains($0.localIdentifier) })
                 dismiss()
             } label: {
-                Text(selected.isEmpty ? "Pick some photos" : "Use these")
+                Text(selected.isEmpty ? "Pick some photos" : useTitle)
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 30)
             }

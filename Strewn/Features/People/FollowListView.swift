@@ -34,9 +34,9 @@ struct FollowListView: View {
             VStack(alignment: .leading, spacing: 16) {
                 PaperSegmented(selection: $tab, options: FollowListRoute.Tab.allCases.map { (value: $0, title: label($0)) })
                 if let people, !people.isEmpty {
-                    PaperSection {
+                    VStack(spacing: 0) {
                         ForEach(Array(people.enumerated()), id: \.element.id) { index, person in
-                            if index > 0 { PaperDivider(inset: 66) }
+                            if index > 0 { Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1) }
                             PeopleListRow(user: person)
                         }
                     }
@@ -44,8 +44,10 @@ struct FollowListView: View {
                     emptyState.frame(maxWidth: .infinity).padding(.top, 40)
                 }
             }
-            .padding(18)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
+        .contentMargins(.bottom, 110, for: .scrollContent)
         .background(DeskMatBackground())
         .paperNavigationTitle(user.id == model.me?.id ? "Your people" : "@\(user.handle)")
         .refreshable { await load() }

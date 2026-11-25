@@ -162,47 +162,47 @@ private struct FloatingTabBar: View {
     private var vertical: Bool { axis == .vertical }
 
     var body: some View {
-        let stack = vertical ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 6))
+        let stack = vertical ? AnyLayout(VStackLayout(spacing: 14)) : AnyLayout(HStackLayout(spacing: 22))
         stack {
-            item(.desk, "Desk", "rectangle.stack.fill")
-            if showsShoot { item(.shoot, "Shoot", "camera.aperture") }
+            item(.desk, "Desk")
+            if showsShoot { item(.shoot, "Shoot") }
             Button(action: onNewBatch) {
-                Image(systemName: "plus").font(.title2.weight(.semibold)).foregroundStyle(Color.onAccent)
-                    .frame(width: 52, height: 52)
-                    .background(Color.strewnAccent, in: Circle())
-                    .shadow(color: Color.strewnAccent.opacity(0.45), radius: 7, y: 4)
+                Image(systemName: "plus").font(.title3.weight(.light)).foregroundStyle(Color.primary)
+                    .frame(width: 46, height: 46)
+                    .overlay(Circle().strokeBorder(Color.primary, lineWidth: 1.2))
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("New batch")
-            item(.friends, "Friends", "person.2.fill", badge: unseen)
+            item(.friends, "Friends", badge: unseen)
         }
-        .padding(vertical ? .vertical : .horizontal, 10)
-        .frame(width: vertical ? 64 : nil, height: vertical ? nil : 64)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
-        .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
-        .padding(.top, vertical ? 0 : 6)
+        .frame(maxWidth: vertical ? nil : .infinity, maxHeight: vertical ? .infinity : nil)
+        .frame(width: vertical ? 72 : nil, height: vertical ? nil : 64)
         .padding(.bottom, vertical ? 0 : 4)
-        .padding(.leading, vertical ? 10 : 0)
+        // The fog thickens towards the edge, so photos fade out under the bar instead of meeting a pill.
+        .background {
+            LinearGradient(stops: [.init(color: Color.mat.opacity(0), location: 0), .init(color: Color.mat.opacity(0.92), location: 0.45),
+                                   .init(color: Color.mat, location: 1)],
+                           startPoint: vertical ? .trailing : .top, endPoint: vertical ? .leading : .bottom)
+                .padding(vertical ? .trailing : .top, -28)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
     }
 
-    private func item(_ value: AppChrome.Tab, _ title: String, _ symbol: String, badge: Int = 0) -> some View {
+    private func item(_ value: AppChrome.Tab, _ title: String, badge: Int = 0) -> some View {
         let selected = tab == value
         return Button { tab = value } label: {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.system(size: 20, weight: .semibold)).frame(height: 24)
-                    .overlay(alignment: .topTrailing) {
-                        if badge > 0 {
-                            Circle().fill(Color.strewnAccent).frame(width: 9, height: 9)
-                                .overlay(Circle().stroke(Color.paper, lineWidth: 1.5))
-                                .offset(x: 6, y: -2)
-                        }
+            Text(title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
+                .overlay(alignment: .topTrailing) {
+                    if badge > 0 {
+                        Circle().fill(Color.strewnAccent).frame(width: 7, height: 7).offset(x: 9, y: -1)
                     }
-                Text(title).font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(selected ? Color.strewnAccent : Color.secondary)
-            .frame(width: vertical ? 64 : 84, height: vertical ? 64 : 56)
-            .contentShape(Rectangle())
+                }
+                .frame(width: vertical ? 72 : 76, height: 48)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(badge > 0 ? "\(title), \(badge) new" : title)

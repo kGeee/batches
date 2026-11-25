@@ -625,11 +625,11 @@ enum SocialExport {
 }
 
 extension BatchBackground {
-    /// The background as a flat colour for a post. Linen is a texture on screen; posts get its
-    /// light colour.
+    /// The background as a flat colour for a post. Fog follows the system on screen; posts get
+    /// its light colour.
     var postColor: CGColor {
         switch self {
-        case .desk: UIColor(red: 0.89, green: 0.86, blue: 0.80, alpha: 1).cgColor
+        case .desk: UIColor(red: 0.890, green: 0.898, blue: 0.878, alpha: 1).cgColor
         default:
             UIColor(color ?? .white).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light)).cgColor
         }

@@ -27,6 +27,8 @@ protocol Backend: Sendable {
     func profile(handle: String) async throws -> User?
     func isHandleAvailable(_ handle: String) async throws -> Bool
     func createProfile(handle: String, displayName: String) async throws -> User
+    /// Stores a square JPEG as your profile picture, or clears it with nil, and returns you as saved.
+    func setAvatar(_ jpeg: Data?) async throws -> User
     func searchProfiles(_ query: String) async throws -> [User]
 
     // Following
@@ -149,12 +151,23 @@ actor MockBackend: Backend {
         (index == 0 ? [SampleData.maya, SampleData.theo] : [SampleData.maya]).map { Pair(a: photo.id, b: $0.id) }
     } ?? [])
     private var likeTimes: [Pair: Date] = [:]
-    // One comment from Maya, so the demo shows what comments look like and how to report one.
-    private var photoComments: [PhotoComment] = SampleData.collections.first?.photos.first.map {
+    // A few comments on the first photo, so the demo shows them taking turns under it in the
+    // viewer, and how to report one.
+    private var photoComments: [PhotoComment] = (SampleData.collections.first?.photos.first.map {
         [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000001")!, photoID: $0.id, author: SampleData.maya,
                       authorID: SampleData.maya.id, body: "That light on the water. Which beach was this?",
-                      createdAt: .now.addingTimeInterval(-7200))]
-    } ?? []
+                      createdAt: .now.addingTimeInterval(-7200)),
+         PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000002")!, photoID: $0.id, author: SampleData.theo,
+                      authorID: SampleData.theo.id, body: "This one has to be the cover. So good.",
+                      createdAt: .now.addingTimeInterval(-5400)),
+         PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000003")!, photoID: $0.id, author: SampleData.jules,
+                      authorID: SampleData.jules.id, body: "Highway 1 never misses.",
+                      createdAt: .now.addingTimeInterval(-3600))]
+    } ?? []) + (SampleData.collections.first?.photos.dropFirst().first.map {
+        // One on the tall second photo, so the viewer shows a comment under a portrait too.
+        [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000004")!, photoID: $0.id, author: SampleData.theo,
+                      authorID: SampleData.theo.id, body: "Fr right", createdAt: .now.addingTimeInterval(-1800))]
+    } ?? [])
     private var photoTags: [PhotoTag]
     private var notificationLog: [ActivityItem]
 
@@ -261,12 +274,26 @@ actor MockBackend: Backend {
         people[me] = user
         return withCounts(user)
     }
+    func setAvatar(_ jpeg: Data?) async throws -> User {
+        let me = try requireMe()
+        guard var user = people[me] else { throw BackendError.notSignedIn }
+        if let jpeg {
+            let url = URL.temporaryDirectory.appending(path: "avatar-\(UUID().uuidString).jpg")
+            try jpeg.write(to: url)
+            user.avatarURL = url
+        } else {
+            user.avatarURL = nil
+        }
+        people[me] = user
+        return withCounts(user)
+    }
+
     func searchProfiles(_ query: String) async throws -> [User] {
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
         return people.values
             .filter { $0.id != signedIn && (q.isEmpty || $0.handle.hasPrefix(q) || $0.displayName.lowercased().contains(q)) }
-            .sorted { $0.handle < $1.handle }
             .map { withCounts($0) }
+            .sorted { ($0.followerCount, $1.handle) > ($1.followerCount, $0.handle) }
     }
 
     // Following
