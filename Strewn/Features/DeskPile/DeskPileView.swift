@@ -7,17 +7,67 @@ struct DeskPileView: View {
     let collection: PhotoCollection
     let namespace: Namespace.ID
     var spread: CGFloat = 1
+    /// Width over height of the cover in the quiet (squared-up) pile. nil follows the cover's
+    /// own shape, kept between a tall portrait and a wide landscape.
+    var aspect: CGFloat? = 4 / 3
     @Environment(\.tiltedPiles) private var tilted
 
     var body: some View {
-        if collection.frame.kind == .filmStrip {
+        // On the quiet desk a roll of film is a pile like any other; the roll only comes out when
+        // piles are tilted, where the desk is playing at being a real table.
+        if tilted && collection.frame.kind == .filmStrip {
             FilmRollPileView(collection: collection, namespace: namespace)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(collection.title), roll of \(collection.photos.count) photos")
                 .accessibilityAddTraits(.isButton)
-        } else {
+        } else if tilted {
             printPile
+        } else {
+            quietPile
         }
+    }
+
+    /// The shape of the first batch on the desk: the cover's own, within reason, when piles lie quiet.
+    static func heroShape(_ collection: PhotoCollection, tilted: Bool) -> CGFloat {
+        if tilted { return 3 / 2 }
+        return min(1.9, max(0.8, collection.cover?.aspectRatio ?? 4 / 3))
+    }
+
+    /// The cover edge to edge, with the next two photos showing only as two paper edges
+    /// behind it. Every photo in the stack keeps its matched id, so opening still flies them out.
+    private var quietPile: some View {
+        let stack = collection.pileStack()
+        let cover = stack.last
+        let shape = aspect ?? min(1.9, max(0.8, cover?.aspectRatio ?? 4 / 3))
+        return GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let step = max(3, min(5, h * 0.025))
+            let under = Array(stack.dropLast())
+            ZStack(alignment: .bottom) {
+                ForEach(Array(under.enumerated()), id: \.element.id) { index, photo in
+                    // Only the top two below the cover show; the rest wait, hidden, under it.
+                    let depth = CGFloat(min(2, under.count - index))
+                    Rectangle()
+                        .fill(depth >= 2 ? Color.fogEdgeFar : Color.fogEdge)
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                        .frame(width: w - depth * w * 0.045, height: h - step * 2)
+                        .matchedGeometryEffect(id: photo.id, in: namespace)
+                        .offset(y: -depth * step * spread)
+                }
+                if let cover {
+                    PhotoImage(photo: cover)
+                        .aspectRatio(cover.aspectRatio, contentMode: .fill)
+                        .frame(width: w, height: h - step * 2)
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                        .matchedGeometryEffect(id: cover.id, in: namespace)
+                }
+            }
+            .frame(width: w, height: h, alignment: .bottom)
+        }
+        .aspectRatio(shape, contentMode: .fit)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(collection.title), \(collection.photos.count) photos")
+        .accessibilityAddTraits(.isButton)
     }
 
     private var printPile: some View {

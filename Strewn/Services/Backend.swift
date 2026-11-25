@@ -149,11 +149,18 @@ actor MockBackend: Backend {
         (index == 0 ? [SampleData.maya, SampleData.theo] : [SampleData.maya]).map { Pair(a: photo.id, b: $0.id) }
     } ?? [])
     private var likeTimes: [Pair: Date] = [:]
-    // One comment from Maya, so the demo shows what comments look like and how to report one.
+    // A few comments on the first photo, so the demo shows them taking turns under it in the
+    // viewer, and how to report one.
     private var photoComments: [PhotoComment] = SampleData.collections.first?.photos.first.map {
         [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000001")!, photoID: $0.id, author: SampleData.maya,
                       authorID: SampleData.maya.id, body: "That light on the water. Which beach was this?",
-                      createdAt: .now.addingTimeInterval(-7200))]
+                      createdAt: .now.addingTimeInterval(-7200)),
+         PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000002")!, photoID: $0.id, author: SampleData.theo,
+                      authorID: SampleData.theo.id, body: "This one has to be the cover. So good.",
+                      createdAt: .now.addingTimeInterval(-5400)),
+         PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000003")!, photoID: $0.id, author: SampleData.jules,
+                      authorID: SampleData.jules.id, body: "Highway 1 never misses.",
+                      createdAt: .now.addingTimeInterval(-3600))]
     } ?? []
     private var photoTags: [PhotoTag]
     private var notificationLog: [ActivityItem]

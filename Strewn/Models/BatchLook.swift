@@ -51,7 +51,7 @@ enum BatchFont: String, Codable, CaseIterable, Identifiable {
 
 extension View {
     /// A title set in its batch's font. A batch with none chosen looks like every other title.
-    func batchTitle(_ font: BatchFont?, _ style: Font.TextStyle = .title3, weight: Font.Weight = .semibold) -> some View {
+    func batchTitle(_ font: BatchFont?, _ style: Font.TextStyle = .title3, weight: Font.Weight = .regular) -> some View {
         self.font((font ?? .classic).font(style, weight: weight))
     }
 }
@@ -260,7 +260,7 @@ enum BatchBackground: Hashable, Codable {
         switch self {
         case .light: "Light"
         case .dark: "Dark"
-        case .desk: "Linen"
+        case .desk: "Fog"
         case .kraft: "Kraft"
         case .custom: "Custom"
         }
@@ -291,7 +291,7 @@ enum BatchBackground: Hashable, Codable {
     }
 
     /// Text and controls follow the background, not the system: dark on light backgrounds, light on
-    /// dark ones. Linen follows the system, as the desk does.
+    /// dark ones. Fog follows the system, as the desk does.
     var scheme: ColorScheme? {
         switch self {
         case .light, .kraft: .light

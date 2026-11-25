@@ -30,6 +30,9 @@ struct DeskView: View {
     @State private var grabOffset: CGSize = .zero
     @State private var dragTranslation: CGSize = .zero
     @State private var dropTargetID: String?
+    /// Set by pulling down at the top of the desk, which opens the followers and filters under
+    /// your name, the way pulling down shows a hidden search field.
+    @State private var pulledOpen = false
     @State private var slots: [String: CGRect] = [:]
 
     private static let tileSpace = "deskTiles"
@@ -68,6 +71,8 @@ struct DeskView: View {
     var body: some View {
         ZStack {
             deskSurface
+                .animation(.snappy(duration: 0.32), value: showsRevealBar)
+                .sensoryFeedback(.impact(weight: .light), trigger: pulledOpen) { _, open in open }
                 .background(DeskMatBackground())
                 .refreshable { await model.refresh() }
                 .sheet(isPresented: $showNewPile) { NewPileSheet() }
@@ -149,6 +154,10 @@ struct DeskView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     top.padding(.horizontal, 14)
+                        // Pulled down past the top: open the followers and filters.
+                        .onGeometryChange(for: Bool.self) { $0.frame(in: .named(Self.scrollSpace)).minY > Self.pullToOpen } action: { pulled in
+                            if pulled, !pulledOpen { pulledOpen = true }
+                        }
                     if tiles.isEmpty {
                         EmptyDesk { showNewPile = true }.padding(.horizontal, 14)
                     } else if shownTiles.isEmpty {
@@ -168,20 +177,56 @@ struct DeskView: View {
                 }
                 .padding(.bottom, 24)
             }
+            // A short desk still gives under a pull, so the followers and filters can always be reached.
+            .scrollBounceBehavior(.always)
+            .coordinateSpace(name: Self.scrollSpace)
         }
+    }
+
+    private static let scrollSpace = "deskScroll"
+    /// How far past the top a pull goes before it opens them. Well short of pull to refresh, so a
+    /// small tug opens them and a long one also refreshes.
+    private static let pullToOpen: CGFloat = 34
+
+    /// Followers and filters stay out of the way until you pull down at the top, then stay open.
+    /// They're also out while a filter is on, so you can see the desk is narrowed.
+    private var showsRevealBar: Bool {
+        guard !model.myCollections.isEmpty, !arranging else { return false }
+        return pulledOpen || filter != .all || layout.mode == .freehand
+    }
+
+    private var revealBar: some View {
+        VStack(spacing: 6) {
+            if let me = model.me {
+                HStack(spacing: 4) {
+                    Button { followList = FollowListRoute(user: me, tab: .followers) } label: {
+                        Text(me.followerCount.counted("follower")).roomyTapTarget()
+                    }
+                    Text("·")
+                    Button { followList = FollowListRoute(user: me, tab: .following) } label: {
+                        Text("\(me.followingCount) following").roomyTapTarget()
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+            }
+            filterBar
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 4)
     }
 
     private var top: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ProfileHeader(user: model.me, pileCount: model.myCollections.count,
-                          frameCount: model.myCollections.reduce(0) { $0 + $1.photos.count },
-                          onSearch: model.myCollections.isEmpty ? nil : { toggleSearch() }, onAccount: { showAccount = true },
-                          onFollowList: { tab in if let me = model.me { followList = FollowListRoute(user: me, tab: tab) } })
+            ProfileHeader(user: model.me,
+                          onSearch: model.myCollections.isEmpty ? nil : { toggleSearch() }, onAccount: { showAccount = true }) {
+                if !model.myCollections.isEmpty { layoutMenu }
+            }
+            if showsRevealBar { revealBar.transition(.move(edge: .top).combined(with: .opacity)) }
             if searching { searchField }
             if let news { activityLine(news) }
-            if !model.myCollections.isEmpty {
-                if arranging { arrangeBar } else { filterBar }
-            }
+            if arranging { arrangeBar }
         }
     }
 
@@ -210,49 +255,44 @@ struct DeskView: View {
         searchFocused = searching
     }
 
-    /// Narrows the desk to one kind of batch, with the layout and Arrange tucked at the end.
+    /// Narrows the desk to one kind of batch: plain words, the chosen one in ink.
     private var filterBar: some View {
-        HStack(spacing: 8) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(DeskFilter.allCases) { option in
-                        let selected = filter == option
-                        Button {
-                            withAnimation(.snappy) { filter = option }
-                        } label: {
-                            Text(option.title)
-                                .font(.subheadline.weight(.semibold))
-                                .padding(.horizontal, 13)
-                                .frame(height: 32)
-                                .foregroundStyle(selected ? Color.mat : Color.primary)
-                                .background(selected ? Color.primary : Color.clear, in: Capsule())
-                                .overlay(Capsule().strokeBorder(Color.secondary.opacity(selected ? 0 : 0.3), lineWidth: 1))
-                                .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                    }
+        HStack(spacing: 18) {
+            ForEach(DeskFilter.allCases) { option in
+                let selected = filter == option
+                Button {
+                    withAnimation(.snappy) { filter = option }
+                } label: {
+                    Text(option.title)
+                        .font(.subheadline.weight(selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .frame(minHeight: 32)
+                        .contentShape(Rectangle())
                 }
-                .padding(.vertical, 1)
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
-            .scrollIndicators(.hidden)
-            Menu {
-                Picker("Layout", selection: Binding(get: { layout.mode },
-                                                    set: { mode in withAnimation(.snappy) { model.changeDesk { $0.mode = mode } } })) {
-                    ForEach(DeskLayout.Mode.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
-                }
-                Button("Arrange", systemImage: "arrow.up.and.down.and.arrow.left.and.right") {
-                    withAnimation(.snappy) { arranging = true }
-                }
-            } label: {
-                Image(systemName: layout.mode.symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .frame(width: 40, height: 32)
-                    .foregroundStyle(Color.primary)
-                    .background(Color.card, in: RoundedRectangle(cornerRadius: 10))
-            }
-            .accessibilityLabel("Layout, \(layout.mode.title)")
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The layout and Arrange, tucked beside search.
+    private var layoutMenu: some View {
+        Menu {
+            Picker("Layout", selection: Binding(get: { layout.mode },
+                                                set: { mode in withAnimation(.snappy) { model.changeDesk { $0.mode = mode } } })) {
+                ForEach(DeskLayout.Mode.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+            }
+            Button("Arrange", systemImage: "arrow.up.and.down.and.arrow.left.and.right") {
+                withAnimation(.snappy) { arranging = true }
+            }
+        } label: {
+            Image(systemName: layout.mode.symbol)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(width: 40, height: 44)
+        }
+        .accessibilityLabel("Layout, \(layout.mode.title)")
     }
 
     // MARK: Activity
@@ -262,6 +302,9 @@ struct DeskView: View {
         let headline: String
         let detail: String
         let batch: PhotoCollection?
+        /// The sentence on the desk: `lead`, the batch's name, then `tail`.
+        var lead: String
+        var tail: String = "."
     }
 
     /// What's happened since you last looked, summed up in two lines.
@@ -326,7 +369,28 @@ struct DeskView: View {
         if added > 0 { parts.append(added.counted("addition")) }
         if follows > 0 { parts.append(follows.counted("new follower")) }
         if let busiest { parts.append(busiest.title + (batches.count > 1 ? " and \(batches.count - 1) more" : "")) }
-        return News(people: people, headline: "\(who) \(verb)", detail: parts.joined(separator: " · "), batch: busiest)
+        let only = { (n: Int) in n > 0 && n == unseen.count }
+        var lead: String
+        var tail = "."
+        if busiest == nil || only(follows) {
+            lead = "\(who) \(verb)."
+        } else if only(likes) {
+            lead = "\(who) liked "
+        } else if only(comments) {
+            lead = "\(who) commented on "
+        } else if likes + comments == unseen.count {
+            lead = "\(who) liked and commented on "
+        } else if only(tags) {
+            lead = "\(who) tagged you in "
+        } else if only(added) {
+            lead = "\(who) added to "
+        } else if only(shares) {
+            lead = "\(who) shared "; tail = " with you."
+        } else {
+            lead = "\(who) \(seen.count == 1 ? "has" : "have") been busy on "
+        }
+        return News(people: people, headline: "\(who) \(verb)", detail: parts.joined(separator: " · "), batch: busiest,
+                    lead: lead, tail: tail)
     }
 
     private func activityLine(_ news: News) -> some View {
@@ -339,21 +403,14 @@ struct DeskView: View {
                 open(batch)
             }
         } label: {
-            HStack(spacing: 10) {
-                HStack(spacing: -8) {
-                    ForEach(news.people.prefix(3)) { AvatarView(user: $0, size: 28) }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(news.headline).font(.footnote.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                    Text(news.detail).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 52)
-            .background(Color.card, in: RoundedRectangle(cornerRadius: 16))
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+            (Text(news.lead).italic()
+             + ((news.lead.hasSuffix(".") ? nil : news.batch).map { Text($0.title).foregroundStyle(.primary) + Text(news.tail).italic() } ?? Text("")))
+                .font(.system(.callout, design: .serif))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(news.headline). \(news.detail)")
@@ -479,11 +536,10 @@ struct DeskView: View {
         return VStack(alignment: .leading, spacing: 4) {
             Group {
                 if openID == collection.id {
-                    Color.clear.aspectRatio(3 / 2, contentMode: .fit)
+                    Color.clear.aspectRatio(DeskPileView.heroShape(collection, tilted: layout.tiltedPiles), contentMode: .fit)
                 } else {
-                    DeskPileView(collection: collection, namespace: pileSpace)
-                        .aspectRatio(3 / 2, contentMode: .fit)
-                        // The pile is square; centered, not pushed to the leading edge.
+                    DeskPileView(collection: collection, namespace: pileSpace, aspect: nil)
+                        .aspectRatio(DeskPileView.heroShape(collection, tilted: layout.tiltedPiles), contentMode: .fit)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -501,7 +557,7 @@ struct DeskView: View {
                 case .pile(let collection):
                     if openID == collection.id {
                         // Keep the slot so the grid does not reflow while the pile is spread out.
-                        Color.clear.aspectRatio(1, contentMode: .fit)
+                        Color.clear.aspectRatio(layout.tiltedPiles ? 1 : 4 / 3, contentMode: .fit)
                     } else {
                         DeskPileView(collection: collection, namespace: pileSpace)
                     }
@@ -749,7 +805,7 @@ private struct DeskGroupView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(group.title).titleStyle(.largeTitle, weight: .bold)
+                        Text(group.title).titleStyle(.largeTitle, weight: .regular)
                             .onTapGesture(perform: onRename)
                             .accessibilityAddTraits(.isButton)
                         Text(piles.count.counted("batch", plural: "batches")).metaStyle(.caption)
@@ -801,12 +857,9 @@ struct PileCaption: View {
                     ReactionsLine(reactions: totals)
                 }
             }
-            HStack(spacing: 6) {
-                if showsVisibility { AudienceChip(collection: collection) }
-                // The longest line that fits beside the chip, so it never wraps to a second.
-                ViewThatFits(in: .horizontal) {
-                    ForEach(metaLines, id: \.self) { Text($0).metaStyle().lineLimit(1) }
-                }
+            // The longest line that fits, so it never wraps to a second.
+            ViewThatFits(in: .horizontal) {
+                ForEach(metaLines, id: \.self) { Text($0).metaStyle().lineLimit(1) }
             }
         }
         .padding(.horizontal, 4)
@@ -816,34 +869,17 @@ struct PileCaption: View {
     private var metaLines: [String] {
         let count = collection.photos.count
         let date = collection.shotOn?.formatted(.dateTime.month(.abbreviated).day())
+        let audience = showsVisibility ? ". \(collection.audienceLabel)" : ""
         var full = [count.counted("frame")]
         if let date { full.append(date) }
         var lines: [String] = []
-        if let place = collection.place { lines.append((full + [place]).joined(separator: " · ")) }
-        lines.append(full.joined(separator: " · "))
-        lines.append((["\(count)"] + (date.map { [$0] } ?? [])).joined(separator: " · "))
-        return lines
-    }
-}
-
-/// Who can see one of your batches, in words: "Followers", "2 people", "Only me".
-struct AudienceChip: View {
-    let collection: PhotoCollection
-
-    var body: some View {
-        let shared = collection.isShared
-        HStack(spacing: 3) {
-            Image(systemName: collection.visibility.symbol)
-            Text(collection.audienceLabel).lineLimit(1)
-        }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(shared ? AnyShapeStyle(Color.strewnAccent) : AnyShapeStyle(.secondary))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(shared ? Color.strewnAccent.opacity(0.12) : Color.secondary.opacity(0.12), in: Capsule())
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Visible to: \(collection.visibility.title)")
+        if let place = collection.place { lines.append((full + [place]).joined(separator: ", ") + audience) }
+        lines.append(full.joined(separator: ", ") + audience)
+        lines.append((["\(count)"] + (date.map { [$0] } ?? [])).joined(separator: ", ") + audience)
+        lines.append(full.joined(separator: ", "))
+        // ViewThatFits needs every option to differ.
+        var seen = Set<String>()
+        return lines.filter { seen.insert($0).inserted }
     }
 }
 
@@ -871,49 +907,34 @@ enum DeskFilter: String, CaseIterable, Identifiable {
     }
 }
 
-/// The top of your desk: who you are, what's on it, and the two things you do from here.
-struct ProfileHeader: View {
+/// The top of your desk: just your name, with search, layout and your account beside it.
+/// Followers and filters wait in the bar that slides in once you scroll.
+struct ProfileHeader<Extra: View>: View {
     let user: User?
-    let pileCount: Int
-    let frameCount: Int
     /// nil hides the search button, as on an empty desk.
     var onSearch: (() -> Void)? = nil
     var onAccount: () -> Void = {}
-    var onFollowList: (FollowListRoute.Tab) -> Void = { _ in }
+    @ViewBuilder var extra: Extra
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(user?.displayName ?? " ").titleStyle(.largeTitle, weight: .bold).lineLimit(1)
-                Text("\(pileCount.counted("batch", plural: "batches")) · \(frameCount.counted("frame"))").metaStyle(.caption)
-                if let user {
-                    HStack(spacing: 4) {
-                        Button { onFollowList(.followers) } label: {
-                            Text(user.followerCount.counted("follower")).metaStyle(.caption).underline().roomyTapTarget()
-                        }
-                        Text("·").metaStyle(.caption)
-                        Button { onFollowList(.following) } label: {
-                            Text("\(user.followingCount) following").metaStyle(.caption).underline().roomyTapTarget()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+        HStack(alignment: .center, spacing: 4) {
+            Text(user?.displayName ?? " ").titleStyle(.largeTitle).lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 8)
             // New batch is in the bar at the bottom, under the thumb.
             if let onSearch {
                 Button(action: onSearch) {
-                    Image(systemName: "magnifyingglass").font(.body.weight(.semibold)).foregroundStyle(Color.strewnAccent)
-                        .frame(width: 44, height: 44)
-                        .background(Color.strewnAccent.opacity(0.12), in: Circle())
+                    Image(systemName: "magnifyingglass").font(.body).foregroundStyle(.secondary)
+                        .frame(width: 40, height: 44)
                 }
                 .accessibilityLabel("Search your batches")
             }
-            Button(action: onAccount) { AvatarView(user: user, size: 44) }
+            extra
+            Button(action: onAccount) { AvatarView(user: user, size: 34) }
+                .frame(width: 44, height: 44)
                 .accessibilityLabel("Account")
         }
-        .padding(.top, 16)
-        .padding(.bottom, 2)
+        .padding(.top, 12)
     }
 }
 
@@ -957,7 +978,7 @@ struct AccountSheet: View {
                             AvatarView(user: me, size: 92)
                                 .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
                                 .padding(.bottom, 6)
-                            Text(me.displayName).titleStyle(.title, weight: .bold)
+                            Text(me.displayName).titleStyle(.title, weight: .regular)
                             Text("@\(me.handle)").metaStyle(.subheadline)
                         }
                         .padding(.top, 8)

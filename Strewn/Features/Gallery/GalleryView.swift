@@ -348,19 +348,19 @@ struct GalleryView: View {
             if isOwner {
                 // Says who can see the batch, and opens the sheet that changes it.
                 Button { showShare = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: collection.visibility.symbol).font(.subheadline.weight(.semibold))
+                    HStack(spacing: 4) {
                         // Once the title is up here it needs the room.
-                        if !titleScrolledAway {
-                            Text(collection.audienceLabel).font(.subheadline.weight(.semibold)).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                        if titleScrolledAway {
+                            Image(systemName: collection.visibility.symbol).font(.subheadline)
+                        } else {
+                            Text(collection.audienceLabel).font(.subheadline.weight(.medium)).lineLimit(1)
+                            Image(systemName: "chevron.down").font(.caption2.weight(.semibold))
                         }
                     }
+                    .foregroundStyle(collection.backdrop.neutralControls ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
                     .fixedSize()
-                    .padding(.horizontal, 13)
                     .frame(minWidth: 38, minHeight: 38)
-                    .background(.foreground.opacity(0.1), in: Capsule())
-                    .contentShape(Capsule())
+                    .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Share, \(collection.visibility.title)")
                 Menu {
@@ -413,7 +413,7 @@ struct GalleryView: View {
     /// The pile's title page: what it is, where and when, and whose.
     private var intro: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(collection.title).batchTitle(collection.font, .largeTitle, weight: .bold)
+            Text(collection.title).batchTitle(collection.font, .largeTitle, weight: .light)
                 .fixedSize(horizontal: false, vertical: true)
                 // Your own pile's title is also the quickest way to rename it.
                 .onTapGesture { if isOwner { startRename() } }
@@ -428,9 +428,10 @@ struct GalleryView: View {
                     .accessibilityAddTraits(isOwner ? .isButton : [])
                     .accessibilityHint(isOwner ? "Edits the description" : "")
             } else if isOwner {
-                Button("Add a description", systemImage: "plus") { showDescription = true }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tint)
+                Button("Add a description") { showDescription = true }
+                    .font(.system(.callout, design: .serif).italic())
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
             }
             Text(introLine).metaStyle(.caption)
             if !isOwner, let owner = collection.owner {
@@ -467,11 +468,9 @@ struct GalleryView: View {
             }
             Text(groupLine(people)).font(.footnote.weight(.medium)).lineLimit(1)
             Spacer(minLength: 4)
-            Label("Group", systemImage: "plus.rectangle.on.rectangle")
-                .font(.caption2.weight(.semibold))
+            Text(collection.canAdd || isOwner ? "Group, you can add" : "Group")
+                .font(.caption)
                 .foregroundStyle(Color.strewnAccent)
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(Color.strewnAccent.opacity(0.12), in: Capsule())
         }
         .accessibilityElement(children: .combine)
     }
@@ -533,49 +532,46 @@ struct GalleryView: View {
         }
     }
 
-    /// What you do to the batch, in reach and by name. A friend who can add photos gets just that.
+    /// What you do to the batch, in one dark pill: Add photos first, then the tools by name.
+    /// A friend who can add photos gets just that.
     private var dock: some View {
-        let neutral = collection.backdrop.neutralControls
-        return HStack(spacing: 2) {
+        HStack(spacing: 0) {
             PhotoSourcePicker(selection: $picked, onGooglePhotos: importFromGoogle) {
-                HStack(spacing: 7) {
-                    if importing || google.isRunning { ProgressView().tint(neutral ? Color(uiColor: .systemBackground) : Color.onAccent) }
-                    else { Image(systemName: "plus").font(.body.weight(.bold)) }
-                    Text("Add photos").font(.subheadline.weight(.semibold)).lineLimit(1)
+                HStack(spacing: 6) {
+                    if importing || google.isRunning { ProgressView().tint(Color.mat).controlSize(.small) }
+                    else { Image(systemName: "plus").font(.subheadline.weight(.medium)) }
+                    Text("Add photos").font(.subheadline.weight(.medium)).lineLimit(1)
                 }
                 .fixedSize()
-                .foregroundStyle(neutral ? Color(uiColor: .systemBackground) : Color.onAccent)
-                .padding(.horizontal, 18)
-                .frame(height: 48)
-                .background(neutral ? Color.primary : Color.strewnAccent, in: Capsule())
+                .padding(.horizontal, 12)
+                .frame(minHeight: 46)
+                .contentShape(Rectangle())
             }
             .disabled(importing || google.isRunning)
             if isOwner {
-                dockButton("Frames", "square.inset.filled") { showFrames = true }
+                dockButton("Frames") { showFrames = true }
                 if frame.kind != .filmStrip {
-                    dockButton("Arrange", "hand.draw") { arrangingBoard = true }
+                    dockButton("Arrange") { arrangingBoard = true }
                         .disabled(collection.photos.isEmpty)
                 }
-                dockButton("Font", "textformat") { showFont = true }
+                dockButton("Font") { showFont = true }
             }
         }
-        .padding(7)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.foreground.opacity(0.06), lineWidth: 1))
-        .shadow(color: .black.opacity(0.22), radius: 16, y: 8)
+        .foregroundStyle(Color.mat)
+        .padding(.horizontal, 8)
+        .background(Color.primary, in: Capsule())
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
         .padding(.horizontal, 16)
         .padding(.bottom, 6)
     }
 
-    private func dockButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+    private func dockButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.system(size: 18, weight: .medium)).frame(height: 22)
-                Text(title).font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, minHeight: 48)
-            .contentShape(Rectangle())
+            Text(title).font(.subheadline)
+                .opacity(0.65)
+                .padding(.horizontal, 9)
+                .frame(minHeight: 46)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -585,7 +581,7 @@ struct GalleryView: View {
         if let date = collection.shotOn { parts.append(date.formatted(.dateTime.month(.wide).day().year())) }
         if let place = collection.place { parts.append(place) }
         parts.append(collection.photos.count.counted("frame"))
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ". ")
     }
 
     private var canAdd: Bool { isOwner || collection.canAdd }
@@ -674,11 +670,10 @@ struct GalleryView: View {
 
     private func headerIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.body.weight(.semibold))
+            .font(.body)
+            .foregroundStyle(.secondary)
             .frame(width: 38, height: 38)
-            // Follows the wall's text color, so it shows on light, dark and desk walls alike.
-            .background(.foreground.opacity(0.1), in: Circle())
-            .contentShape(Circle())
+            .contentShape(Rectangle())
     }
 
     private var subtitle: String {
@@ -731,23 +726,14 @@ struct PhotoMetaRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(exifLine).metaStyle().lineLimit(1)
             if photo.id == collection.cover?.id {
-                Label("Cover", systemImage: "star.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.strewnAccent)
-                    .labelStyle(TightLabel())
-                    .transition(.scale.combined(with: .opacity))
+                Text("Cover").metaStyle()
+                    .transition(.opacity)
             }
+            if !exifLine.isEmpty { Text(exifLine).metaStyle().lineLimit(1) }
             if let tags = reactions?.tags, !tags.isEmpty, let onTags {
                 Button(action: onTags) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "tag.fill").font(.system(size: 10, weight: .semibold))
-                        Text(tagSummary(tags)).font(.caption2.weight(.semibold)).lineLimit(1)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.foreground.opacity(0.08), in: Capsule())
+                    Text(tagSummary(tags)).metaStyle().lineLimit(1)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Tagged: \(tagSummary(tags))")
@@ -780,7 +766,7 @@ struct PhotoMetaRow: View {
     }
 
     private func tagSummary(_ tags: [PhotoTag]) -> String {
-        let names = tags.compactMap { $0.user.map { "@\($0.handle)" } }
+        let names = tags.compactMap { $0.user.map { "with @\($0.handle)" } }
         guard let first = names.first else { return tags.count.counted("person", plural: "people") }
         return tags.count > 1 ? "\(first) +\(tags.count - 1)" : first
     }
@@ -788,11 +774,11 @@ struct PhotoMetaRow: View {
     private func reaction(_ count: Int, _ symbol: String, on: Bool, action: (() -> Void)?) -> some View {
         Button { action?() } label: {
             HStack(spacing: 4) {
-                Image(systemName: symbol).font(.footnote.weight(.semibold))
-                if count > 0 { Text("\(count)").font(.caption.weight(.semibold).monospacedDigit()).contentTransition(.numericText()) }
+                Image(systemName: symbol).font(.footnote)
+                if count > 0 { Text("\(count)").font(.caption.monospacedDigit()).contentTransition(.numericText()) }
             }
             .foregroundStyle(on ? AnyShapeStyle(Color.strewnAccent) : AnyShapeStyle(.secondary))
-            .padding(.horizontal, 7)
+            .padding(.horizontal, 5)
             .frame(minWidth: 34, minHeight: 30)
             .contentShape(Rectangle())
         }
@@ -800,14 +786,8 @@ struct PhotoMetaRow: View {
         .disabled(action == nil)
     }
 
-    private struct TightLabel: LabelStyle {
-        func makeBody(configuration: Configuration) -> some View {
-            HStack(spacing: 3) { configuration.icon; configuration.title }
-        }
-    }
-
     private var exifLine: String {
-        var parts = [String(format: "%02d", index + 1)]
+        var parts: [String] = []
         if let f = photo.exif?.aperture { parts.append("ƒ\(f.formatted())") }
         if let s = photo.exif?.shutter { parts.append(s) }
         if let iso = photo.exif?.iso { parts.append("ISO \(iso)") }

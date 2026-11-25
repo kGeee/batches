@@ -89,7 +89,7 @@ struct FirstBatchOnboardingView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("STEP 2 OF 2 · START YOUR DESK").metaStyle(.caption)
             Text(greetingTitle)
-                .titleStyle(.title2, weight: .bold)
+                .titleStyle(.title2, weight: .regular)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Pick a handful of shots from a trip, an afternoon or a roll. Every photo stays full frame — nothing is cropped.")
                 .font(.subheadline)

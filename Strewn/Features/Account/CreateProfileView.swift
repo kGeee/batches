@@ -17,7 +17,7 @@ struct CreateProfileView: View {
                    confirmTitle: "Continue", confirmEnabled: canContinue, confirmBusy: working, onConfirm: create) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("STEP 1 OF 2 · YOUR PROFILE").metaStyle(.caption)
-                Text("How people find you").titleStyle(.title2, weight: .bold)
+                Text("How people find you").titleStyle(.title2, weight: .regular)
                 Text("Friends search for your name or handle. Next, a quick tour, then your first batch.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }

@@ -42,7 +42,7 @@ struct FriendsFeedView: View {
                             // Side by side when there's room; one card wide on a phone-sized window.
                             case .batches:
                                 if model.feed.isEmpty { emptyState } else {
-                                    LazyVGrid(columns: window.feedGrid(), spacing: 14) { batches }
+                                    LazyVGrid(columns: window.feedGrid(spacing: 22), spacing: 30) { batches }
                                 }
                             case .activity:
                                 LazyVStack(spacing: 14) { activity }
@@ -95,24 +95,37 @@ struct FriendsFeedView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Friends").titleStyle(.largeTitle, weight: .bold)
+                Text("Friends").titleStyle(.largeTitle)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 NavigationLink(value: FindPeopleRoute()) {
-                    Image(systemName: "person.badge.plus").font(.body.weight(.semibold)).foregroundStyle(Color.strewnAccent)
-                        .frame(width: 44, height: 44)
-                        .background(Color.strewnAccent.opacity(0.12), in: Circle())
+                    Text("Find people").font(.subheadline).foregroundStyle(.secondary)
+                        .frame(minHeight: 44)
                 }
-                .accessibilityLabel("Find people")
             }
-            PaperSegmented(selection: $section, options: [
-                (.batches, "Batches"),
-                (.activity, model.unseenActivity.isEmpty ? "Notifications" : "Notifications · \(model.unseenActivity.count)")
-            ])
+            HStack(spacing: 22) {
+                sectionTab(.batches, "Batches")
+                sectionTab(.activity, model.unseenActivity.isEmpty ? "Activity" : "Activity, \(model.unseenActivity.count) new")
+            }
         }
         .padding(.horizontal, 14)
         .padding(.top, 16)
         .padding(.bottom, 4)
+    }
+
+    private func sectionTab(_ value: Section, _ title: String) -> some View {
+        let selected = section == value
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) { section = value }
+        } label: {
+            Text(title)
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
+                .frame(minHeight: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func close() {
@@ -141,7 +154,9 @@ struct FriendsFeedView: View {
     private var batches: some View {
         ForEach(model.feed) { collection in
             FeedCard(collection: collection, namespace: feedSpace, isOpen: openID == collection.id,
-                     totals: model.batchTotals[collection.id]) {
+                     totals: model.batchTotals[collection.id]) { photo in
+                // The cover opens the batch; any other photo opens the batch and then that photo.
+                openPhotoID = photo?.id == collection.cover?.id ? nil : photo?.id
                 withAnimation(.spring(response: 0.55, dampingFraction: 0.82)) { openID = collection.id }
             }
         }
@@ -149,16 +164,16 @@ struct FriendsFeedView: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "person.2").font(.largeTitle).foregroundStyle(.secondary)
             Text("Nothing here yet").titleStyle(.title3)
             Text("Follow friends to see the batches they share with followers. Batches shared with you directly show up here too.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            NavigationLink(value: FindPeopleRoute()) { Text("Find people") }
-                .buttonStyle(.borderedProminent).tint(.strewnAccent).foregroundStyle(Color.onAccent)
+            NavigationLink(value: FindPeopleRoute()) { Text("Find people").font(.subheadline.weight(.medium)) }
+                .foregroundStyle(Color.strewnAccent)
+                .frame(minHeight: 44)
         }
-        .padding(28)
+        .padding(.vertical, 48)
+        .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
     }
 
     // MARK: Notifications
@@ -170,47 +185,41 @@ struct FriendsFeedView: View {
         }
         if model.activity.isEmpty {
             VStack(spacing: 12) {
-                Image(systemName: "bell").font(.largeTitle).foregroundStyle(.secondary)
-                Text("No notifications yet").titleStyle(.title3)
+                Text("Nothing new").titleStyle(.title3)
                 Text("When someone tags you, mentions you, shares a batch, follows you, or reacts to your photos, it shows up here.")
                     .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
-            .padding(28)
+            .padding(.vertical, 48)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
         } else {
+            // A plain list on the fog: hairlines between, no card.
             VStack(spacing: 0) {
                 ForEach(Array(model.activity.enumerated()), id: \.element.id) { index, item in
-                    if index > 0 { PaperDivider(inset: 58) }
+                    if index > 0 { Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1) }
                     activityRow(item)
                 }
             }
-            .background(Color.card, in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
     private var pushPermissionPrompt: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "bell.badge")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Color.strewnAccent)
-                .frame(width: 38, height: 38)
-                .background(Color.strewnAccent.opacity(0.12), in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Turn on push notifications").font(.subheadline.weight(.semibold))
-                Text("Know right away when someone tags you or shares a batch.").font(.caption).foregroundStyle(.secondary)
-            }
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("Hear about it straight away when someone tags you or shares a batch.")
+                .font(.system(.callout, design: .serif).italic())
+                .foregroundStyle(.secondary)
             Spacer(minLength: 4)
-            Button("Allow") {
+            Button("Turn on") {
                 Task {
                     _ = await model.push?.requestPermission()
                     pushAuthStatus = model.push?.authorizationStatus ?? .denied
                 }
             }
-            .buttonStyle(.paper(.primary, compact: true))
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(Color.strewnAccent)
+            .frame(minHeight: 44)
         }
-        .padding(14)
-        .background(Color.card, in: RoundedRectangle(cornerRadius: 16))
+        .padding(.bottom, 6)
     }
 
     private func activityRow(_ item: ActivityItem) -> some View {
@@ -223,15 +232,14 @@ struct FriendsFeedView: View {
         return Button {
             openNotification(item, localBatch: localBatch)
         } label: {
-            HStack(alignment: .top, spacing: 10) {
-                AvatarView(user: item.actor, size: 34)
+            HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     notificationText(name: name, item: item)
                         .font(.subheadline)
                         .lineLimit(3)
                         .multilineTextAlignment(.leading)
-                    Text(([item.at.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))]
-                          + [title].compactMap { $0 }).joined(separator: " · "))
+                    Text(([item.at.formatted(.relative(presentation: .named, unitsStyle: .wide))]
+                          + [title].compactMap { $0 }).joined(separator: ", "))
                         .metaStyle().lineLimit(1)
                 }
                 Spacer(minLength: 4)
@@ -244,12 +252,11 @@ struct FriendsFeedView: View {
                 } else if let photo {
                     // The whole photo, small: never cropped to a square.
                     PhotoImage(photo: photo)
-                        .frame(maxWidth: 48, maxHeight: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .frame(maxWidth: 52, maxHeight: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -257,7 +264,7 @@ struct FriendsFeedView: View {
     }
 
     private func notificationText(name: String, item: ActivityItem) -> Text {
-        let bold = Text(name).fontWeight(.semibold)
+        let bold = Text(name).fontWeight(.medium)
         switch item.kind {
         case .like:
             return bold + Text(" liked your photo")
@@ -310,7 +317,7 @@ private struct FeedCard: View {
     let namespace: Namespace.ID
     let isOpen: Bool
     let totals: PhotoReactions?
-    let onOpen: () -> Void
+    let onOpen: (Photo?) -> Void
 
     @Environment(AppModel.self) private var model
     @State private var picked: [PhotosPickerItem] = []
@@ -321,40 +328,33 @@ private struct FeedCard: View {
         VStack(alignment: .leading, spacing: 10) {
             if let owner = collection.owner {
                 NavigationLink(value: owner) {
-                    HStack(spacing: 10) {
-                        AvatarView(user: owner, size: 34)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(owner.displayName).font(.subheadline.weight(.semibold))
-                            Text(byline(owner)).metaStyle().lineLimit(1)
-                        }
-                        Spacer()
-                        if collection.canAdd {
-                            badge("Group", "plus.rectangle.on.rectangle").accessibilityLabel("Group batch, you can add photos")
-                        } else if collection.visibility == .people {
-                            badge("For you", "person.2.fill").accessibilityLabel("Shared with you")
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(owner.displayName).font(.footnote.weight(.medium)).foregroundStyle(.primary)
+                        Text(byline).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 4)
+                        if let place = collection.place {
+                            Text(place).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
+                    .frame(minHeight: 30)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             // While the batch is open its prints are in the gallery; the card keeps their room.
-            FeedPrints(collection: collection, namespace: namespace, placeholder: isOpen)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onOpen)
-            PileCaption(collection: collection)
-            if showsFooter {
-                HStack(spacing: 10) {
-                    if let totals, totals.likeCount + totals.commentCount + totals.tags.count > 0 { ReactionsLine(reactions: totals) }
-                    Spacer(minLength: 4)
-                    if collection.canAdd { addYours }
+            FeedPrints(collection: collection, namespace: namespace, placeholder: isOpen, onOpen: onOpen)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(collection.title).batchTitle(collection.font, .body).lineLimit(2)
+                Spacer(minLength: 4)
+                if collection.canAdd {
+                    addYours
+                } else {
+                    Text(note ?? collection.photos.count.counted("frame")).font(.caption).foregroundStyle(.secondary)
                 }
-                .padding(.top, 2)
             }
+            .padding(.top, 2)
             GooglePhotosStatus(picking: google)
         }
-        .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22))
         .animation(.snappy, value: google.stage)
         .googlePhotosAlert(google)
         .onChange(of: picked) { _, items in
@@ -369,20 +369,15 @@ private struct FeedCard: View {
         }
     }
 
-    private var showsFooter: Bool {
-        collection.canAdd || (totals.map { $0.likeCount + $0.commentCount + $0.tags.count > 0 } ?? false)
-    }
-
     private var addYours: some View {
         PhotoSourcePicker(selection: $picked, onGooglePhotos: importFromGoogle) {
-            HStack(spacing: 6) {
-                if importing || google.isRunning { ProgressView().tint(Color.onAccent) } else { Image(systemName: "plus").font(.footnote.weight(.bold)) }
-                Text("Add yours").font(.subheadline.weight(.semibold))
+            HStack(spacing: 4) {
+                Text("Group, you can add").font(.caption)
+                if importing || google.isRunning { ProgressView().controlSize(.mini) } else { Image(systemName: "plus").font(.caption) }
             }
-            .foregroundStyle(Color.onAccent)
-            .padding(.horizontal, 14)
-            .frame(height: 34)
-            .background(Color.strewnAccent, in: Capsule())
+            .foregroundStyle(Color.strewnAccent)
+            .frame(minHeight: 32)
+            .contentShape(Rectangle())
         }
         .disabled(importing || google.isRunning)
         .accessibilityLabel("Add your photos to \(collection.title)")
@@ -398,103 +393,87 @@ private struct FeedCard: View {
         }
     }
 
-    private func badge(_ title: String, _ symbol: String) -> some View {
-        Label(title, systemImage: symbol)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(Color.strewnAccent)
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Color.strewnAccent.opacity(0.12), in: Capsule())
+    /// A batch shared with you alone says so beside the title, instead of its frame count.
+    private var note: String? {
+        collection.visibility == .people ? "For you" : nil
     }
 
-    private func byline(_ owner: User) -> String {
-        var parts = ["@\(owner.handle)"]
-        if let date = collection.shotOn { parts.append(date.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))) }
-        return parts.joined(separator: " · ")
+    /// When, and the likes and comments if there are any: "2 days ago, 3 likes".
+    private var byline: String {
+        var parts = [collection.shotOn?.formatted(.relative(presentation: .named, unitsStyle: .wide))].compactMap { $0 }
+        if let totals {
+            if totals.likeCount > 0 { parts.append(totals.likeCount.counted("like")) }
+            if totals.commentCount > 0 { parts.append(totals.commentCount.counted("comment")) }
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
-/// The cover and the next frame or two, side by side at one height, each a whole print.
+/// The batch's photos in a strip you can scroll sideways: the cover large, the rest smaller, all
+/// at one short height, with the next one peeking in at the edge so it reads as more to see.
+/// A batch of one shows its cover alone, the full width.
 private struct FeedPrints: View {
     let collection: PhotoCollection
     let namespace: Namespace.ID
     let placeholder: Bool
+    let onOpen: (Photo?) -> Void
 
-    private static let paper: CGFloat = 5
+    private static let gap: CGFloat = 6
+    /// The feed's side margin, which the strip scrolls out into.
+    private static let bleed: CGFloat = 14
 
-    /// The cover first, then what follows it, for as long as the row stays a decent height.
-    private var shown: [Photo] {
-        guard let cover = collection.cover else { return [] }
-        var photos = [cover]
-        for photo in collection.photos where photo.id != cover.id && photos.count < 3 {
-            // Each print added makes the row shorter; a panorama can leave no room for more.
-            if (photos + [photo]).reduce(0, { $0 + $1.aspectRatio }) > 3.4 { break }
-            photos.append(photo)
-        }
-        return photos
+    private var photos: [Photo] {
+        guard let cover = collection.cover else { return collection.photos }
+        return [cover] + collection.photos.filter { $0.id != cover.id }
     }
 
     var body: some View {
-        let photos = shown
-        let more = collection.photos.count - photos.count
-        JustifiedRow(aspects: photos.map(\.aspectRatio), paper: Self.paper) {
-            ForEach(photos) { photo in
-                if placeholder {
-                    Color.clear
-                } else {
-                    PrintView(photo: photo, paper: Self.paper)
-                        .matchedGeometryEffect(id: photo.id, in: namespace)
+        let photos = photos
+        Color.clear
+            .aspectRatio(photos.count == 1 ? 2 : 2.3, contentMode: .fit)
+            .overlay {
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: Self.gap) {
+                        ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                            Group {
+                                if placeholder {
+                                    Color.clear
+                                } else {
+                                    PhotoImage(photo: photo)
+                                        .aspectRatio(photo.aspectRatio, contentMode: .fill)
+                                        .containerRelativeFrame(.horizontal) { width, _ in share(index, of: photos.count, in: width) }
+                                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                                        .matchedGeometryEffect(id: photo.id, in: namespace)
+                                }
+                            }
+                            .containerRelativeFrame(.horizontal) { width, _ in share(index, of: photos.count, in: width) }
+                            .containerRelativeFrame(.vertical)
+                            .contentShape(Rectangle())
+                            .onTapGesture { onOpen(photo) }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(index == 0 ? "\(collection.title), cover" : "Photo \(index + 1) of \(photos.count)")
+                            .accessibilityAddTraits(.isButton)
+                        }
+                    }
+                    .scrollTargetLayout()
                 }
+                .scrollTargetBehavior(.viewAligned)
+                .scrollIndicators(.hidden)
+                .scrollDisabled(photos.count < 3 || placeholder)
+                // Runs out to the screen edge while scrolling, but rests lined up with the text.
+                .contentMargins(.horizontal, Self.bleed, for: .scrollContent)
+                .padding(.horizontal, -Self.bleed)
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if more > 0, !placeholder {
-                Text("+\(more)")
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.black.opacity(0.55), in: Capsule())
-                    .padding(Self.paper + 5)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(collection.title), \(collection.photos.count) photos")
-        .accessibilityAddTraits(.isButton)
-    }
-}
-
-/// Lays prints out in one row at a shared height, each as wide as its photo needs, so the row
-/// fills the width and nothing is cropped.
-private struct JustifiedRow: Layout {
-    let aspects: [CGFloat]
-    var paper: CGFloat = 5
-    var spacing: CGFloat = 8
-    var maxHeight: CGFloat = 230
-
-    /// The print height at which the row is exactly `width` wide, capped for a lone portrait.
-    private func height(for width: CGFloat) -> CGFloat {
-        let total = aspects.reduce(0, +)
-        guard total > 0 else { return 0 }
-        let count = CGFloat(aspects.count)
-        let photoHeight = (width - 2 * paper * count - spacing * (count - 1)) / total
-        return min(maxHeight, max(0, photoHeight) + 2 * paper)
+            .frame(maxWidth: .infinity)
     }
 
-    private func width(of aspect: CGFloat, height: CGFloat) -> CGFloat { aspect * (height - 2 * paper) + 2 * paper }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 340
-        return CGSize(width: width, height: height(for: width))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let height = height(for: bounds.width)
-        let widths = aspects.map { width(of: $0, height: height) }
-        let used = widths.reduce(0, +) + spacing * CGFloat(max(0, widths.count - 1))
-        var x = bounds.minX + (bounds.width - used) / 2
-        for (subview, width) in zip(subviews, widths) {
-            subview.place(at: CGPoint(x: x, y: bounds.minY), proposal: ProposedViewSize(width: width, height: height))
-            x += width + spacing
+    /// How wide a photo is in the strip: the cover most of the width, the rest about a third, so
+    /// with three or more the third shows a sliver at the edge.
+    private func share(_ index: Int, of count: Int, in width: CGFloat) -> CGFloat {
+        switch count {
+        case 1: return width
+        case 2: return index == 0 ? (width - Self.gap) * 2 / 3 : (width - Self.gap) / 3
+        default: return index == 0 ? width * 0.62 : width * 0.3
         }
     }
 }

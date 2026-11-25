@@ -109,7 +109,7 @@ struct ProfileView: View {
         HStack(spacing: 14) {
             AvatarView(user: shown, size: 64)
             VStack(alignment: .leading, spacing: 2) {
-                Text(shown.displayName).titleStyle(.title2, weight: .bold)
+                Text(shown.displayName).titleStyle(.title2, weight: .regular)
                 if isMe {
                     Text(piles.count.counted("batch", plural: "batches")).metaStyle()
                     // Your own counts open the lists of who they are.
