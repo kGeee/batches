@@ -314,3 +314,68 @@ final class GooglePhotosTests: XCTestCase {
         XCTAssertEqual(GooglePhotos.Stage.downloading(done: 2, total: 5).text, "Importing 2 of 5 from Google Photos…")
     }
 }
+
+// MARK: - Tolerant replies (second "couldn't read" report)
+
+@MainActor
+final class GooglePhotosReplyShapeTests: XCTestCase {
+    private func decode<T: Decodable>(_ type: T.Type, _ object: Any) throws -> T {
+        try JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    func testSessionWithoutPickerUriOrPollingConfigDecodes() throws {
+        let s = try decode(GooglePhotos.PickerSession.self, ["id": "s1", "mediaItemsSet": true, "expireTime": "2026-11-25T00:00:00Z"])
+        XCTAssertEqual(s.id, "s1")
+        XCTAssertNil(s.pickerUri)
+        XCTAssertNil(s.pollingConfig)
+        XCTAssertEqual(s.mediaItemsSet, true)
+    }
+
+    func testSessionWithOddFieldTypesDecodes() throws {
+        let s = try decode(GooglePhotos.PickerSession.self, ["id": "s1", "pickerUri": 5, "mediaItemsSet": "true", "pollingConfig": "x"])
+        XCTAssertNil(s.pickerUri)
+        XCTAssertEqual(s.mediaItemsSet, true)
+    }
+
+    func testPollStateNeedsNothingButMediaItemsSet() throws {
+        XCTAssertEqual(try decode(GooglePhotos.PollState.self, ["mediaItemsSet": true]).mediaItemsSet, true)
+        XCTAssertNil(try decode(GooglePhotos.PollState.self, [String: Any]()).mediaItemsSet)
+        XCTAssertNil(try decode(GooglePhotos.PollState.self, ["mediaItemsSet": NSNull()]).mediaItemsSet)
+        XCTAssertEqual(try decode(GooglePhotos.PollState.self, ["mediaItemsSet": 0]).mediaItemsSet, false)
+    }
+
+    func testItemWithOnlyAMediaFileDecodes() throws {
+        let item = try decode(GooglePhotos.PickedItem.self, ["mediaFile": ["baseUrl": "https://x/a"], "type": 3, "createTime": ["seconds": 1]])
+        XCTAssertNil(item.id)
+        XCTAssertNil(item.type)
+        XCTAssertNil(item.createTime)
+    }
+
+    /// One unreadable item is skipped; the rest of the page still imports.
+    func testUnreadableItemIsSkippedNotFatal() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let google = GooglePhotos.shared
+        google.urlSession = URLSession(configuration: config)
+        defer { google.urlSession = .shared; StubURLProtocol.handler = nil }
+        let page: [String: Any] = ["mediaItems": [
+            ["id": "bad", "mediaFile": ["mimeType": "image/jpeg"]],
+            ["id": "bad2"],
+            ["id": "ok", "type": "PHOTO", "mediaFile": ["baseUrl": "https://x/ok"]],
+        ]]
+        StubURLProtocol.handler = { _ in (200, [:], try JSONSerialization.data(withJSONObject: page)) }
+        let items = try await google.pickedItems(sessionID: "s", token: "t")
+        XCTAssertEqual(items.map(\.id), ["ok"])
+    }
+
+    func testPageWithJunkMediaItemsIsEmptyNotFatal() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let google = GooglePhotos.shared
+        google.urlSession = URLSession(configuration: config)
+        defer { google.urlSession = .shared; StubURLProtocol.handler = nil }
+        StubURLProtocol.handler = { _ in (200, [:], Data(#"{"mediaItems": "nope", "nextPageToken": 7}"#.utf8)) }
+        let items = try await google.pickedItems(sessionID: "s", token: "t")
+        XCTAssertTrue(items.isEmpty)
+    }
+}
