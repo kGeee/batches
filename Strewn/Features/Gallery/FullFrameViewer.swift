@@ -9,6 +9,9 @@ import SwiftUI
 /// - Tap to hide or show the controls; tap a dot to jump.
 /// - The latest comments take turns as the photo's caption; like, comment and share sit under it.
 /// - Edit, Make cover, Remove and Report are in the menu at the top.
+/// The things you can do to a photo that depend on whose it is.
+enum PhotoAction { case edit, remove, report, tag, post }
+
 struct FullFrameViewer: View {
     let photos: [Photo]
     var coverID: UUID?
@@ -34,6 +37,9 @@ struct FullFrameViewer: View {
     /// The batch the photos are in, for the comments sheet.
     var commentsBatch: PhotoCollection?
     var canTag = false
+    /// Which of the per-photo actions this photo allows, as you page through a batch where some
+    /// photos are yours and some a friend's. The actions still have to be given above.
+    var allows: (Photo, PhotoAction) -> Bool = { _, _ in true }
     var onOpenUser: ((User) -> Void)?
     var onCommentCount: (Photo, Int) -> Void
     var onTagsChange: (Photo, [PhotoTag]) -> Void
@@ -53,6 +59,11 @@ struct FullFrameViewer: View {
     @State private var closing = false
     @State private var chromeHidden = false
     @State private var zoomed = false
+    /// Where the top bar ends and the caption and buttons begin, in screen points, so the photo
+    /// sits between them instead of under them.
+    @State private var topEdge: CGFloat = 0
+    @State private var bottomEdge: CGFloat = 0
+    @State private var screenHeight: CGFloat = 0
     @State private var removing: Photo?
     @GestureState private var dragging = false
 
@@ -64,7 +75,8 @@ struct FullFrameViewer: View {
          shareLink: ((Photo) -> URL)? = nil, shareTitle: String = "Batches", onShareBatch: (() -> Void)? = nil,
          socialBatch: PhotoCollection? = nil, onReport: ((Photo) -> Void)? = nil,
          captionFont: BatchFont? = nil, reactions: [UUID: PhotoReactions]? = nil, onLike: ((Photo) -> Void)? = nil,
-         commentsBatch: PhotoCollection? = nil, canTag: Bool = false, onOpenUser: ((User) -> Void)? = nil,
+         commentsBatch: PhotoCollection? = nil, canTag: Bool = false,
+         allows: @escaping (Photo, PhotoAction) -> Bool = { _, _ in true }, onOpenUser: ((User) -> Void)? = nil,
          onCommentCount: @escaping (Photo, Int) -> Void = { _, _ in },
          onTagsChange: @escaping (Photo, [PhotoTag]) -> Void = { _, _ in }) {
         self.captionFont = captionFont
@@ -72,6 +84,7 @@ struct FullFrameViewer: View {
         self.onLike = onLike
         self.commentsBatch = commentsBatch
         self.canTag = canTag
+        self.allows = allows
         self.onOpenUser = onOpenUser
         self.onCommentCount = onCommentCount
         self.onTagsChange = onTagsChange
@@ -94,6 +107,7 @@ struct FullFrameViewer: View {
     var body: some View {
         ZStack {
             Color.viewerFog.opacity(closing ? 0 : 1 - progress).ignoresSafeArea()
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).height } action: { screenHeight = $0 }
             pages
                 .offset(drag)
                 .scaleEffect(1 - 0.25 * progress)
@@ -126,7 +140,7 @@ struct FullFrameViewer: View {
         }
         .sheet(item: $tagsPhoto) { photo in
             if let commentsBatch {
-                PhotoTagsSheet(photo: photo, collection: commentsBatch, canManageTags: canTag,
+                PhotoTagsSheet(photo: photo, collection: commentsBatch, canManageTags: canTag(photo),
                                initialTags: reactions?[photo.id]?.tags ?? [],
                                onOpenUser: onOpenUser,
                                onTagsChange: { onTagsChange(photo, $0) })
@@ -152,6 +166,9 @@ struct FullFrameViewer: View {
                                   onDoubleTapLike: likeOnDoubleTap(photo)) {
                         withAnimation(.easeOut(duration: 0.2)) { chromeHidden.toggle() }
                     }
+                    // Between the bar and the caption while they show; the whole screen once they're tapped away.
+                    .padding(.top, chromeHidden ? 0 : topEdge)
+                    .padding(.bottom, chromeHidden ? 0 : max(0, screenHeight - bottomEdge))
                     .containerRelativeFrame([.horizontal, .vertical])
                     .id(photo.id)
                 }
@@ -182,21 +199,27 @@ struct FullFrameViewer: View {
                 if photos.count > 1 { dots }
             }
             .padding(.horizontal, 14)
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY + 8 } action: { topEdge = $0 }
             .padding(.bottom, 28)
             .background(alignment: .top) { scrim(.top) }
             Spacer()
             VStack(alignment: .leading, spacing: 14) {
-                if let caption = current?.caption {
-                    Text(caption).batchTitle(captionFont, .headline, weight: .regular)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 20)
-                }
                 if let current {
-                    details(current)
+                    // One height whether or not there's a caption or comments, so the photo above
+                    // and the buttons below stay put as you swipe from photo to photo.
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let caption = current.caption {
+                            Text(caption).batchTitle(captionFont, .headline, weight: .regular)
+                                .lineLimit(2)
+                                .padding(.horizontal, 20)
+                        }
+                        details(current)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 118, maxHeight: 118, alignment: .bottomLeading)
                     actionBar(current)
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY - 8 } action: { bottomEdge = $0 }
             .padding(.top, 48)
             .padding(.bottom, 4)
             .background(alignment: .bottom) { scrim(.bottom) }
@@ -219,7 +242,7 @@ struct FullFrameViewer: View {
                     .animation(.default, value: index)
             }
             Spacer()
-            if let current, hasMenu {
+            if let current, hasMenu(current) {
                 Menu { menuItems(current) } label: { circleIcon("ellipsis") }
                     .accessibilityLabel("More")
             } else {
@@ -229,18 +252,23 @@ struct FullFrameViewer: View {
         }
     }
 
-    private var hasMenu: Bool { onEdit != nil || onSetCover != nil || onRemove != nil || onReport != nil || canTag || socialBatch != nil }
+    private func hasMenu(_ photo: Photo) -> Bool {
+        onSetCover != nil || (onEdit != nil && allows(photo, .edit)) || (onRemove != nil && allows(photo, .remove))
+            || (onReport != nil && allows(photo, .report)) || canTag(photo) || (socialBatch != nil && allows(photo, .post))
+    }
+
+    private func canTag(_ photo: Photo) -> Bool { canTag && allows(photo, .tag) }
 
     /// The things you do to a photo now and then, kept away from the ones you tap every time.
     @ViewBuilder
     private func menuItems(_ photo: Photo) -> some View {
-        if canTag, commentsBatch != nil {
+        if canTag(photo), commentsBatch != nil {
             Button("Tag people", systemImage: "tag") { tagsPhoto = photo }
         }
-        if let onEdit {
+        if let onEdit, allows(photo, .edit) {
             Button("Edit", systemImage: "slider.horizontal.3") { onEdit(photo) }
         }
-        if socialBatch != nil {
+        if socialBatch != nil, allows(photo, .post) {
             Button("Post to Instagram or TikTok", systemImage: "square.and.arrow.up.on.square") { socialPhoto = photo }
         }
         if let onSetCover {
@@ -248,10 +276,10 @@ struct FullFrameViewer: View {
             Button(isCover ? "This is the cover" : "Make cover", systemImage: isCover ? "star.fill" : "star") { onSetCover(photo) }
                 .disabled(isCover)
         }
-        if onRemove != nil {
+        if onRemove != nil, allows(photo, .remove) {
             Button("Remove from batch", systemImage: "rectangle.stack.badge.minus", role: .destructive) { removing = photo }
         }
-        if let onReport {
+        if let onReport, allows(photo, .report) {
             Button("Report photo", systemImage: "flag") { onReport(photo) }
         }
     }
@@ -347,7 +375,7 @@ struct FullFrameViewer: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Comments, \(mine.commentCount)")
-                if canTag || !mine.tags.isEmpty {
+                if canTag(photo) || !mine.tags.isEmpty {
                     Button {
                         tagsPhoto = photo
                     } label: {
@@ -356,7 +384,7 @@ struct FullFrameViewer: View {
                                     tint: .primary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(canTag ? "Tag people, \(mine.tags.count)" : "Tagged people, \(mine.tags.count)")
+                    .accessibilityLabel(canTag(photo) ? "Tag people, \(mine.tags.count)" : "Tagged people, \(mine.tags.count)")
                 }
                 if mine.tags.contains(where: \.hasPosition) {
                     Button {

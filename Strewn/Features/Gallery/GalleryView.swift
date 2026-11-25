@@ -167,20 +167,29 @@ struct GalleryView: View {
                 .environment(\.colorScheme, systemScheme)
         }
         .fullScreenCover(item: $viewerPhoto) { photo in
-            // Just the photo you tapped: no paging sideways through the rest of the pile.
-            FullFrameViewer(photos: [photo], start: photo, coverID: collection.coverPhotoID,
-                            onEdit: canEdit(photo) ? { edit($0) } : nil,
+            // Opens on the photo you tapped; swipe sideways through the rest of the batch.
+            FullFrameViewer(photos: collection.photos, start: photo, coverID: collection.coverPhotoID,
+                            onEdit: { edit($0) },
                             onSetCover: isOwner ? { model.setCover($0, in: collection.id) } : nil,
-                            onRemove: canRemove(photo) ? { remove($0) } : nil,
+                            onRemove: { remove($0) },
                             shareLink: { AppModel.link(to: collection, photo: $0) }, shareTitle: collection.title,
                             onShareBatch: isOwner && !collection.isShared ? { openShareSettings() } : nil,
-                            socialBatch: canPost(photo) ? collection : nil,
-                            onReport: canReport(photo) ? { report($0) } : nil,
+                            socialBatch: collection,
+                            onReport: { report($0) },
                             captionFont: collection.font,
                             reactions: reactions,
                             onLike: reactions == nil ? nil : { like($0) },
                             commentsBatch: reactions == nil ? nil : collection,
-                            canTag: canTag(photo),
+                            canTag: true,
+                            allows: { photo, action in
+                                switch action {
+                                case .edit: canEdit(photo)
+                                case .remove: canRemove(photo)
+                                case .report: canReport(photo)
+                                case .tag: canTag(photo)
+                                case .post: canPost(photo)
+                                }
+                            },
                             onOpenUser: { user in
                                 viewerPhoto = nil
                                 Task {
