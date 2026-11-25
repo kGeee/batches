@@ -153,7 +153,7 @@ actor MockBackend: Backend {
     private var likeTimes: [Pair: Date] = [:]
     // A few comments on the first photo, so the demo shows them taking turns under it in the
     // viewer, and how to report one.
-    private var photoComments: [PhotoComment] = SampleData.collections.first?.photos.first.map {
+    private var photoComments: [PhotoComment] = (SampleData.collections.first?.photos.first.map {
         [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000001")!, photoID: $0.id, author: SampleData.maya,
                       authorID: SampleData.maya.id, body: "That light on the water. Which beach was this?",
                       createdAt: .now.addingTimeInterval(-7200)),
@@ -163,7 +163,11 @@ actor MockBackend: Backend {
          PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000003")!, photoID: $0.id, author: SampleData.jules,
                       authorID: SampleData.jules.id, body: "Highway 1 never misses.",
                       createdAt: .now.addingTimeInterval(-3600))]
-    } ?? []
+    } ?? []) + (SampleData.collections.first?.photos.dropFirst().first.map {
+        // One on the tall second photo, so the viewer shows a comment under a portrait too.
+        [PhotoComment(id: UUID(uuidString: "6B1E0C1A-0003-4000-8000-000000000004")!, photoID: $0.id, author: SampleData.theo,
+                      authorID: SampleData.theo.id, body: "Fr right", createdAt: .now.addingTimeInterval(-1800))]
+    } ?? [])
     private var photoTags: [PhotoTag]
     private var notificationLog: [ActivityItem]
 

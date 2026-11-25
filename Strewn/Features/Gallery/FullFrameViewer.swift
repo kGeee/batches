@@ -197,14 +197,12 @@ struct FullFrameViewer: View {
 
     // MARK: Controls
 
-    /// Room under the photo for its caption, the latest comment and who's tagged, all at once.
-    private static let captionArea: CGFloat = 156
+    private static let maxDots = 15
 
     private var chrome: some View {
         VStack(spacing: 0) {
             VStack(spacing: 10) {
                 topBar
-                if photos.count > 1 { dots }
             }
             .padding(.horizontal, 14)
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY + 8 } action: { topEdge = $0 }
@@ -213,8 +211,8 @@ struct FullFrameViewer: View {
             Spacer()
             VStack(alignment: .leading, spacing: 14) {
                 if let current {
-                    // One height whether or not there's a caption or comments, so the photo above
-                    // and the buttons below stay put as you swipe from photo to photo.
+                    // Only as tall as what this photo has, so a photo with nothing to say runs down
+                    // to the buttons; the buttons themselves never move.
                     VStack(alignment: .leading, spacing: 10) {
                         if let caption = current.caption {
                             Text(caption).batchTitle(captionFont, .headline, weight: .regular)
@@ -223,9 +221,7 @@ struct FullFrameViewer: View {
                         }
                         details(current)
                     }
-                    .frame(maxWidth: .infinity, minHeight: Self.captionArea, maxHeight: Self.captionArea, alignment: .bottomLeading)
-                    // Anything that still doesn't fit is cut off here rather than drawn over the photo.
-                    .clipped()
+                    .frame(maxWidth: .infinity, alignment: .bottomLeading)
                     actionBar(current)
                 }
             }
@@ -244,12 +240,18 @@ struct FullFrameViewer: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 52, minHeight: 44, alignment: .leading)
             Spacer()
+            // Where you are, in the bar itself so it takes no room from the photo: dots for a
+            // batch that fits them, "3 of 40" for a long one.
             if photos.count > 1, let current, let index = photos.firstIndex(of: current) {
-                Text("\(index + 1) of \(photos.count)")
-                    .font(.footnote.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-                    .animation(.default, value: index)
+                if photos.count <= Self.maxDots {
+                    dots.accessibilityLabel("Photo \(index + 1) of \(photos.count)")
+                } else {
+                    Text("\(index + 1) of \(photos.count)")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                        .animation(.default, value: index)
+                }
             }
             Spacer()
             if let current, hasMenu(current) {
@@ -796,7 +798,7 @@ private struct CommentCaption: View {
                     VStack(alignment: .leading, spacing: 6) {
                         MentionText("\u{201C}\(comment.body)\u{201D}")
                             .font(.system(.title3, design: .serif).italic())
-                            .lineLimit(2)
+                            .lineLimit(1)
                             .multilineTextAlignment(.leading)
                         Text(byline(comment)).font(.footnote).foregroundStyle(.secondary)
                     }
@@ -806,7 +808,7 @@ private struct CommentCaption: View {
                                             removal: .modifier(active: Drift(y: reduceMotion ? 0 : -10, blur: reduceMotion ? 0 : 4, opacity: 0),
                                                                identity: Drift())))
                 }
-                .frame(maxWidth: .infinity, minHeight: 74, maxHeight: 74, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .contentShape(Rectangle())
         }
