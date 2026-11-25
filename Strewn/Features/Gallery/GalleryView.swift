@@ -28,7 +28,7 @@ struct GalleryView: View {
     @State private var renaming = false
     @State private var renameDraft = ""
     @State private var showReorder = false
-    @State private var showFont = false
+    @State private var showDate = false
     @State private var showDescription = false
     /// Likes and comment counts by photo; nil while loading, or when they can't be loaded.
     @State private var reactions: [UUID: PhotoReactions]?
@@ -137,9 +137,11 @@ struct GalleryView: View {
                 .environment(\.colorScheme, systemScheme)
         }
         .sheet(isPresented: $showReorder) { ReorderPhotosSheet(collectionID: collection.id) }
-        .sheet(isPresented: $showFont) {
-            BatchFontSheet(title: collection.title, current: collection.font) { model.setFont($0, for: collection.id) }
-                .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showDate) {
+            BatchDateSheet(current: collection.shotOn ?? collection.photos.compactMap(\.capturedAt).min() ?? .now) {
+                model.setDate($0, for: collection.id)
+            }
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showDescription) {
             BatchDescriptionSheet(current: collection.description) { model.setDescription($0, for: collection.id) }
@@ -285,10 +287,7 @@ struct GalleryView: View {
 
     @ViewBuilder
     private func photoMenu(_ photo: Photo) -> some View {
-        Button("View", systemImage: "arrow.up.left.and.arrow.down.right") { viewerPhoto = photo }
         if let mine = reactions?[photo.id] {
-            Button(mine.likedByMe ? "Unlike" : "Like", systemImage: mine.likedByMe ? "heart.slash" : "heart") { like(photo) }
-            Button("Comments", systemImage: "bubble.left") { commentsPhoto = photo }
             if canTag(photo) || !mine.tags.isEmpty {
                 Button(canTag(photo) ? "Tag people" : "Tagged people", systemImage: "tag") { tagsPhoto = photo }
             }
@@ -354,6 +353,7 @@ struct GalleryView: View {
                 Menu {
                     Button("Rename", systemImage: "pencil", action: startRename)
                     Button("Description", systemImage: "text.alignleft") { showDescription = true }
+                    Button("Date", systemImage: "calendar") { showDate = true }
                     Button("Reorder photos", systemImage: "arrow.up.arrow.down") { showReorder = true }
                         .disabled(collection.photos.count < 2)
                     Button("Post to Instagram or TikTok", systemImage: "square.and.arrow.up.on.square") {
@@ -422,6 +422,10 @@ struct GalleryView: View {
                     .buttonStyle(.plain)
             }
             Text(introLine).metaStyle(.caption)
+                // Your own batch's date is a tap away from changing.
+                .onTapGesture { if isOwner { showDate = true } }
+                .accessibilityAddTraits(isOwner ? .isButton : [])
+                .accessibilityHint(isOwner ? "Changes the date" : "")
             if !isOwner, let owner = collection.owner {
                 Button { onOpenOwner?(owner) } label: {
                     HStack(spacing: 8) {
@@ -528,7 +532,6 @@ struct GalleryView: View {
                     dockButton("Arrange") { arrangingBoard = true }
                         .disabled(collection.photos.isEmpty)
                 }
-                dockButton("Font") { showFont = true }
             }
         }
         .foregroundStyle(Color.mat)
@@ -704,7 +707,6 @@ struct PhotoMetaRow: View {
                 Text("Cover").metaStyle()
                     .transition(.opacity)
             }
-            if !exifLine.isEmpty { Text(exifLine).metaStyle().lineLimit(1) }
             if let tags = reactions?.tags, !tags.isEmpty, let onTags {
                 Button(action: onTags) {
                     Text(tagSummary(tags)).metaStyle().lineLimit(1)
@@ -760,14 +762,6 @@ struct PhotoMetaRow: View {
         .disabled(action == nil)
     }
 
-    private var exifLine: String {
-        var parts: [String] = []
-        if let f = photo.exif?.aperture { parts.append("ƒ\(f.formatted())") }
-        if let s = photo.exif?.shutter { parts.append(s) }
-        if let iso = photo.exif?.iso { parts.append("ISO \(iso)") }
-        if photo.edit != nil { parts.append("edited") }
-        return parts.joined(separator: " · ")
-    }
 }
 
 /// Two-column masonry: each photo keeps its own height, so nothing is cropped to a square.
@@ -868,4 +862,28 @@ private struct ReorderPhotosSheet: View {
 private struct SocialPosting: Identifiable {
     let id = UUID()
     let single: Photo?
+}
+
+/// Changes when a batch says it was: a calendar, with today and the photos' own date to hand.
+private struct BatchDateSheet: View {
+    let current: Date
+    var onSave: (Date) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var date: Date
+
+    init(current: Date, onSave: @escaping (Date) -> Void) {
+        self.current = current
+        self.onSave = onSave
+        _date = State(initialValue: current)
+    }
+
+    var body: some View {
+        PaperSheet(title: "Date", onCancel: { dismiss() }, confirmTitle: "Save",
+                   confirmEnabled: !Calendar.current.isDate(date, inSameDayAs: current),
+                   onConfirm: { onSave(date); dismiss() }) {
+            DatePicker("Date", selection: $date, in: ...Date.now.addingTimeInterval(86_400), displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .labelsHidden()
+        }
+    }
 }

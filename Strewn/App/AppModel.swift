@@ -318,9 +318,44 @@ final class AppModel {
 
     // MARK: People
 
+    /// People to follow, most likely first: people you share batches with, then everyone else by
+    /// how many followers they have. People you already follow go last.
     func search(_ query: String) async -> [User] {
         let ids = Set(blocked.map(\.id))
-        return ((try? await backend.searchProfiles(query)) ?? []).filter { !ids.contains($0.id) }
+        let found = ((try? await backend.searchProfiles(query)) ?? []).filter { !ids.contains($0.id) }
+        let known = Set(myCollections.flatMap { $0.sharedWith.map(\.id) + $0.contributors.map(\.id) }
+                        + feed.flatMap { [$0.ownerID] + $0.contributors.map(\.id) })
+        func rank(_ user: User) -> Int {
+            if following.contains(user.id) { return 2 }
+            return known.contains(user.id) ? 0 : 1
+        }
+        return found.sorted { a, b in
+            if rank(a) != rank(b) { return rank(a) < rank(b) }
+            if a.followerCount != b.followerCount { return a.followerCount > b.followerCount }
+            return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
+        }
+    }
+
+    /// Makes a square, 512 px JPEG of the middle of the picture and saves it as your profile picture;
+    /// nil removes it.
+    func setAvatar(_ image: UIImage?) async throws {
+        let jpeg = image.flatMap { Self.avatarJPEG(from: $0) }
+        if image != nil, jpeg == nil { return }   // nothing to draw: leave the picture as it is
+        me = try await backend.setAvatar(jpeg)
+    }
+
+    nonisolated static func avatarJPEG(from image: UIImage, side: CGFloat = 512) -> Data? {
+        let size = image.size
+        let shortest = min(size.width, size.height)
+        guard shortest > 0 else { return nil }
+        let scale = side / shortest
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let square = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            image.draw(in: CGRect(x: (side - size.width * scale) / 2, y: (side - size.height * scale) / 2,
+                                  width: size.width * scale, height: size.height * scale))
+        }
+        return square.jpegData(compressionQuality: 0.82)
     }
 
     func profile(_ id: UUID) async -> User? {
@@ -664,10 +699,6 @@ final class AppModel {
         try await backend.removeTag(userID: userID, photoID: photoID)
     }
 
-    func setFont(_ font: BatchFont, for collectionID: UUID) {
-        update(collectionID) { $0.font = font }
-    }
-
     /// Replaces where a batch's photos sit on its board, and opens the batch as a board.
     func setBoard(_ placements: [UUID: BatchBoard.Placement], for collectionID: UUID) {
         update(collectionID) { pile in
@@ -682,6 +713,11 @@ final class AppModel {
             board.isOn = isOn
             pile.board = board
         }
+    }
+
+    /// When the batch says it was, shown under its title and used to sort it.
+    func setDate(_ date: Date, for collectionID: UUID) {
+        update(collectionID) { $0.shotOn = date }
     }
 
     func rename(_ collectionID: UUID, to title: String) {

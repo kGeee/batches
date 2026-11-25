@@ -27,6 +27,8 @@ protocol Backend: Sendable {
     func profile(handle: String) async throws -> User?
     func isHandleAvailable(_ handle: String) async throws -> Bool
     func createProfile(handle: String, displayName: String) async throws -> User
+    /// Stores a square JPEG as your profile picture, or clears it with nil, and returns you as saved.
+    func setAvatar(_ jpeg: Data?) async throws -> User
     func searchProfiles(_ query: String) async throws -> [User]
 
     // Following
@@ -268,12 +270,26 @@ actor MockBackend: Backend {
         people[me] = user
         return withCounts(user)
     }
+    func setAvatar(_ jpeg: Data?) async throws -> User {
+        let me = try requireMe()
+        guard var user = people[me] else { throw BackendError.notSignedIn }
+        if let jpeg {
+            let url = URL.temporaryDirectory.appending(path: "avatar-\(UUID().uuidString).jpg")
+            try jpeg.write(to: url)
+            user.avatarURL = url
+        } else {
+            user.avatarURL = nil
+        }
+        people[me] = user
+        return withCounts(user)
+    }
+
     func searchProfiles(_ query: String) async throws -> [User] {
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
         return people.values
             .filter { $0.id != signedIn && (q.isEmpty || $0.handle.hasPrefix(q) || $0.displayName.lowercased().contains(q)) }
-            .sorted { $0.handle < $1.handle }
             .map { withCounts($0) }
+            .sorted { ($0.followerCount, $1.handle) > ($1.followerCount, $0.handle) }
     }
 
     // Following

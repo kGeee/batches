@@ -52,6 +52,8 @@ struct FindPeopleView: View {
             .padding(.bottom, 24)
         }
         .scrollDismissesKeyboard(.interactively)
+        // Room under the last person, so the tab bar never sits over them.
+        .contentMargins(.bottom, 110, for: .scrollContent)
         .background(DeskMatBackground())
         .navigationTitle("Find people")
         .navigationBarTitleDisplayMode(.inline)

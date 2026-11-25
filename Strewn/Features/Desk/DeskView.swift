@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UserNotifications
 
@@ -965,8 +966,63 @@ struct AccountSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pushStatus: UNAuthorizationStatus = .notDetermined
     @State private var showTour = false
+    @State private var avatarPick: PhotosPickerItem?
+    @State private var savingAvatar = false
+    @State private var avatarFailed = false
 
     private var frameCount: Int { model.myCollections.reduce(0) { $0 + $1.photos.count } }
+
+    /// Your picture, which is also the way to change it: tap to choose a photo, hold to remove it.
+    private func avatarPicker(_ me: User) -> some View {
+        PhotosPicker(selection: $avatarPick, matching: .images, photoLibrary: .shared()) {
+            AvatarView(user: me, size: 92)
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                .overlay {
+                    if savingAvatar {
+                        Circle().fill(.black.opacity(0.35))
+                        ProgressView().tint(.white)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "camera.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.onAccent)
+                        .frame(width: 28, height: 28)
+                        .background(Color.strewnAccent, in: Circle())
+                        .overlay(Circle().stroke(Color.mat, lineWidth: 2))
+                        .offset(x: 2, y: 2)
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(savingAvatar)
+        .contextMenu {
+            if me.avatarURL != nil {
+                Button("Remove photo", systemImage: "trash", role: .destructive) { saveAvatar(nil) }
+            }
+        }
+        .accessibilityLabel(me.avatarURL == nil ? "Add a profile photo" : "Change profile photo")
+        .onChange(of: avatarPick) { _, item in
+            guard let item else { return }
+            Task {
+                let image = (try? await item.loadTransferable(type: Data.self)).flatMap(UIImage.init(data:))
+                avatarPick = nil
+                if let image { saveAvatar(image) } else { avatarFailed = true }
+            }
+        }
+        .alert("Couldn't change your photo", isPresented: $avatarFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Check your connection and try again.")
+        }
+    }
+
+    private func saveAvatar(_ image: UIImage?) {
+        savingAvatar = true
+        Task {
+            defer { savingAvatar = false }
+            do { try await model.setAvatar(image) } catch { avatarFailed = true }
+        }
+    }
     private var recentCovers: [Photo] { model.myCollections.compactMap(\.cover).prefix(4).map { $0 } }
 
     var body: some View {
@@ -975,8 +1031,7 @@ struct AccountSheet: View {
                 VStack(spacing: 22) {
                     if let me = model.me {
                         VStack(spacing: 6) {
-                            AvatarView(user: me, size: 92)
-                                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+                            avatarPicker(me)
                                 .padding(.bottom, 6)
                             Text(me.displayName).titleStyle(.title, weight: .regular)
                             Text("@\(me.handle)").metaStyle(.subheadline)

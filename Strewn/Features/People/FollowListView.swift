@@ -47,6 +47,7 @@ struct FollowListView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
+        .contentMargins(.bottom, 110, for: .scrollContent)
         .background(DeskMatBackground())
         .paperNavigationTitle(user.id == model.me?.id ? "Your people" : "@\(user.handle)")
         .refreshable { await load() }

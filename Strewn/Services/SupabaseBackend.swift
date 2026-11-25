@@ -137,13 +137,36 @@ final class SupabaseBackend: Backend, @unchecked Sendable {
         }
     }
 
+    func setAvatar(_ jpeg: Data?) async throws -> User {
+        let me = try await myID()
+        let folder = me.uuidString.lowercased()
+        var url: URL?
+        if let jpeg {
+            // A new name each time, so caches never show the old face under the new link.
+            let path = "\(folder)/\(UUID().uuidString.lowercased()).jpg"
+            try await client.storage.from("avatars").upload(path, data: jpeg, options: FileOptions(contentType: "image/jpeg", upsert: true))
+            url = try client.storage.from("avatars").getPublicURL(path: path)
+        }
+        let row: ProfileRow = try await client.from("profiles")
+            .update(["avatar_url": url?.absoluteString])
+            .eq("id", value: me.uuidString).select().single().execute().value
+        // Old pictures go; failing to tidy them up doesn't undo the change.
+        if let old = try? await client.storage.from("avatars").list(path: folder) {
+            let keep = url?.lastPathComponent
+            let stale = old.map(\.name).filter { $0 != keep }.map { "\(folder)/\($0)" }
+            if !stale.isEmpty { _ = try? await client.storage.from("avatars").remove(paths: stale) }
+        }
+        return row.model
+    }
+
     func searchProfiles(_ query: String) async throws -> [User] {
         let me = try await myID()
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "%", with: "").replacingOccurrences(of: ",", with: "")
         var request = client.from("profiles").select().neq("id", value: me.uuidString)
         if !q.isEmpty { request = request.or("handle.ilike.\(q)%,display_name.ilike.%\(q)%") }
-        let rows: [ProfileRow] = try await request.order("handle").limit(30).execute().value
+        // The 30 most followed that match; the app orders them from there.
+        let rows: [ProfileRow] = try await request.order("follower_count", ascending: false).order("handle").limit(30).execute().value
         return rows.map(\.model)
     }
 
