@@ -12,7 +12,8 @@ struct SmartBatch: Identifiable, Hashable {
     var assetIDs: [String]
     var start: Date
     var end: Date
-    /// Average position of the photos that have one; nil when none do.
+    /// The busiest spot among the photos that have a place (not an average, which can land
+    /// somewhere nobody went); nil when none do.
     var latitude: Double?
     var longitude: Double?
     /// Every part of it was taken far from home, over one or more days.
@@ -50,48 +51,65 @@ struct SmartBatchItem: Hashable, Sendable {
     let date: Date
     var latitude: Double? = nil
     var longitude: Double? = nil
+    /// Already in one of your batches: still counts toward finding home, never suggested again.
+    var isBatched = false
+
+    var coordinate: (lat: Double, lon: Double)? {
+        guard let latitude, let longitude else { return nil }
+        return (latitude, longitude)
+    }
 }
 
 /// Groups photos into suggested batches by when and where they were taken.
 ///
 /// 1. Moments: a new group starts wherever two photos are more than `momentGap` apart.
-/// 2. Days: neighbouring moments join when they're under `dayGap` apart and close together.
-/// 3. Trips: neighbouring groups taken far from home join, even across nights.
+/// 2. Days: neighbouring moments join when they're under `dayGap` apart, close together, and
+///    the result still spans less than `maxDaySpan`.
+/// 3. Trips: neighbouring days taken far from home join, even across nights, as long as each
+///    day is within `tripHopMeters` of the last and the trip stays under `maxTripSpan`. Days
+///    with no location in the middle of a trip go with it.
 /// 4. Only groups of at least `minimumCount` photos are suggested, newest first.
 ///
-/// The numbers are starting points to tune on real libraries.
+/// Home is where you took photos on the most different days, so a heavily photographed
+/// holiday spot can't outrank where you live. The numbers are starting points to tune on real
+/// libraries.
 enum SmartBatchGrouping {
     static let momentGap: TimeInterval = 90 * 60
     static let dayGap: TimeInterval = 6 * 60 * 60
+    static let maxDaySpan: TimeInterval = 20 * 60 * 60
     static let tripGap: TimeInterval = 36 * 60 * 60
+    static let maxTripSpan: TimeInterval = 21 * 24 * 60 * 60
     static let nearbyMeters: Double = 25_000
     static let awayFromHomeMeters: Double = 80_000
+    static let tripHopMeters: Double = 400_000
     static let minimumCount = 6
+    /// Grid sizes in degrees: about 11 km for home, about 1.1 km for naming a batch's place.
+    static let homeCell = 0.1
+    static let placeCell = 0.01
 
-    private struct Group {
+    struct Group {
         var items: [SmartBatchItem]
-        var center: (lat: Double, lon: Double)? {
-            let located = items.compactMap { item -> (Double, Double)? in
-                guard let lat = item.latitude, let lon = item.longitude else { return nil }
-                return (lat, lon)
-            }
-            guard !located.isEmpty else { return nil }
-            let n = Double(located.count)
-            return (located.map { $0.0 }.reduce(0, +) / n, located.map { $0.1 }.reduce(0, +) / n)
-        }
+        /// The middle of the busiest ~1 km cell among located photos.
+        var center: (lat: Double, lon: Double)? { SmartBatchGrouping.busiestSpot(items.compactMap(\.coordinate)) }
         var start: Date { items.first!.date }
         var end: Date { items.last!.date }
+        var span: TimeInterval { end.timeIntervalSince(start) }
     }
 
-    static func batches(from items: [SmartBatchItem], home: (lat: Double, lon: Double)? = nil) -> [SmartBatch] {
-        let sorted = items.sorted { $0.date < $1.date }
+    /// `items` may include photos already in batches: they help find home, then are left out.
+    static func batches(from items: [SmartBatchItem], home: (lat: Double, lon: Double)? = nil,
+                        calendar: Calendar = .current) -> [SmartBatch] {
+        let all = items.sorted { $0.date < $1.date }
+        let home = home ?? Self.home(of: all, calendar: calendar)
+        let sorted = all.filter { !$0.isBatched }
         guard !sorted.isEmpty else { return [] }
-        let home = home ?? Self.home(of: sorted)
 
         // 1. Moments.
         var moments: [Group] = []
         for item in sorted {
-            if let last = moments.last?.items.last, item.date.timeIntervalSince(last.date) <= momentGap {
+            if let last = moments.last, let lastItem = last.items.last,
+               item.date.timeIntervalSince(lastItem.date) <= momentGap,
+               item.date.timeIntervalSince(last.start) <= maxDaySpan {
                 moments[moments.count - 1].items.append(item)
             } else {
                 moments.append(Group(items: [item]))
@@ -103,6 +121,7 @@ enum SmartBatchGrouping {
         for moment in moments {
             if let last = days.last,
                moment.start.timeIntervalSince(last.end) <= dayGap,
+               moment.end.timeIntervalSince(last.start) <= maxDaySpan,
                !isFar(last.center, moment.center, beyond: nearbyMeters) {
                 days[days.count - 1].items += moment.items
             } else {
@@ -110,17 +129,40 @@ enum SmartBatchGrouping {
             }
         }
 
-        // 3. Trips: join neighbours that were both taken away from home.
+        // 3. Trips. Days with no location wait in `neutral` until the next located day says
+        //    whether the trip carried on through them.
         var groups: [(group: Group, isTrip: Bool)] = []
+        var neutral: [Group] = []
+        var lastTripSpot: (lat: Double, lon: Double)?
+        func flushNeutral() {
+            groups += neutral.map { (group: $0, isTrip: false) }
+            neutral = []
+        }
         for day in days {
-            let away = isAway(day.center, home: home)
-            if let last = groups.last, last.isTrip, away,
-               day.start.timeIntervalSince(last.group.end) <= tripGap {
-                groups[groups.count - 1].group.items += day.items
+            guard let center = day.center else {
+                if let last = groups.last, last.isTrip, neutral.isEmpty || neutral.last!.end <= day.start,
+                   day.start.timeIntervalSince(neutral.last?.end ?? last.group.end) <= tripGap {
+                    neutral.append(day)
+                } else {
+                    flushNeutral()
+                    groups.append((group: day, isTrip: false))
+                }
+                continue
+            }
+            let away = isAway(center, home: home)
+            if away, let last = groups.last, last.isTrip,
+               day.start.timeIntervalSince(neutral.last?.end ?? last.group.end) <= tripGap,
+               day.end.timeIntervalSince(last.group.start) <= maxTripSpan,
+               !isFar(lastTripSpot, center, beyond: tripHopMeters) {
+                groups[groups.count - 1].group.items += neutral.flatMap(\.items) + day.items
+                neutral = []
             } else {
+                flushNeutral()
                 groups.append((group: day, isTrip: away))
             }
+            if away { lastTripSpot = center }
         }
+        flushNeutral()
 
         // 4. Big enough to feel like a pile, newest first.
         return groups
@@ -134,23 +176,42 @@ enum SmartBatchGrouping {
             .sorted { $0.end > $1.end }
     }
 
-    /// Where most photos are taken: the busiest cell of a roughly 1 km grid.
-    static func home(of items: [SmartBatchItem]) -> (lat: Double, lon: Double)? {
-        var counts: [String: (count: Int, lat: Double, lon: Double)] = [:]
+    /// Where you take photos on the most different days, on a roughly 11 km grid: a week at a
+    /// resort is seven days there, a year at home is hundreds. Ties go to the cell with more
+    /// photos. The spot returned is the busiest ~1 km cell inside the winning cell.
+    static func home(of items: [SmartBatchItem], calendar: Calendar = .current) -> (lat: Double, lon: Double)? {
+        struct Cell { var days: Set<DateComponents> = []; var points: [(lat: Double, lon: Double)] = [] }
+        var cells: [String: Cell] = [:]
         for item in items {
-            guard let lat = item.latitude, let lon = item.longitude else { continue }
-            let key = "\((lat * 100).rounded()),\((lon * 100).rounded())"
-            let entry = counts[key] ?? (0, (lat * 100).rounded() / 100, (lon * 100).rounded() / 100)
-            counts[key] = (entry.count + 1, entry.lat, entry.lon)
+            guard let point = item.coordinate else { continue }
+            let key = cellKey(point, size: homeCell)
+            cells[key, default: Cell()].days.insert(calendar.dateComponents([.year, .month, .day], from: item.date))
+            cells[key, default: Cell()].points.append(point)
         }
-        guard let best = counts.values.max(by: { $0.count < $1.count }) else { return nil }
-        return (best.lat, best.lon)
+        let best = cells.values.max { a, b in
+            a.days.count != b.days.count ? a.days.count < b.days.count : a.points.count < b.points.count
+        }
+        return best.flatMap { busiestSpot($0.points) }
     }
 
-    /// A group is away when it has a place and that place is far from home. Without a home
-    /// (no located photos at all) nothing counts as a trip.
-    private static func isAway(_ center: (lat: Double, lon: Double)?, home: (lat: Double, lon: Double)?) -> Bool {
-        guard let center, let home else { return false }
+    /// The mean of the photos in the busiest ~1 km cell. Averaging only within one small cell
+    /// keeps the spot somewhere a photo was actually taken (and works across the date line).
+    static func busiestSpot(_ points: [(lat: Double, lon: Double)]) -> (lat: Double, lon: Double)? {
+        guard !points.isEmpty else { return nil }
+        var cells: [String: [(lat: Double, lon: Double)]] = [:]
+        for point in points { cells[cellKey(point, size: placeCell), default: []].append(point) }
+        let busiest = cells.values.max { $0.count < $1.count }!
+        let n = Double(busiest.count)
+        return (busiest.map(\.lat).reduce(0, +) / n, busiest.map(\.lon).reduce(0, +) / n)
+    }
+
+    private static func cellKey(_ point: (lat: Double, lon: Double), size: Double) -> String {
+        "\((point.lat / size).rounded(.down)),\((point.lon / size).rounded(.down))"
+    }
+
+    /// Far from home. Without a home (no located photos at all) nothing counts as a trip.
+    private static func isAway(_ center: (lat: Double, lon: Double), home: (lat: Double, lon: Double)?) -> Bool {
+        guard let home else { return false }
         return distance(center, home) > awayFromHomeMeters
     }
 
@@ -186,7 +247,10 @@ final class SmartBatchSuggestions {
     private(set) var hasLoaded = false
     /// Place names by batch id, filled in as cards come on screen.
     private(set) var places: [String: String] = [:]
-    @ObservationIgnored private var geocoding: Set<String> = []
+    @ObservationIgnored private var nameQueue: [SmartBatch] = []
+    @ObservationIgnored private var namingLoop: Task<Void, Never>?
+    /// Batches whose place lookup failed this session.
+    @ObservationIgnored private var unnamable: Set<String> = []
     @ObservationIgnored private let geocoder = CLGeocoder()
 
     nonisolated static func currentAccess() -> Access {
@@ -220,7 +284,7 @@ final class SmartBatchSuggestions {
     }
 
     /// Still photos from your own library: no screenshots, no hidden photos, one photo per
-    /// burst (its chosen frame), and nothing already in one of your batches.
+    /// burst (its chosen frame). Photos already in one of your batches are flagged, not dropped.
     nonisolated static func libraryItems(since: Date, excluding batched: Set<String>) -> [SmartBatchItem] {
         let options = PHFetchOptions()
         options.predicate = NSPredicate(format: "mediaType == %d AND creationDate >= %@",
@@ -231,32 +295,52 @@ final class SmartBatchSuggestions {
         options.includeAllBurstAssets = false
         var items: [SmartBatchItem] = []
         PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in
-            guard let date = asset.creationDate,
-                  !asset.mediaSubtypes.contains(.photoScreenshot),
-                  !batched.contains(asset.localIdentifier) else { return }
+            guard let date = asset.creationDate, !asset.mediaSubtypes.contains(.photoScreenshot) else { return }
             let coordinate = asset.location?.coordinate
+            // Batched photos stay in the list, flagged, so they still help find home.
             items.append(SmartBatchItem(id: asset.localIdentifier, date: date,
-                                        latitude: coordinate?.latitude, longitude: coordinate?.longitude))
+                                        latitude: coordinate?.latitude, longitude: coordinate?.longitude,
+                                        isBatched: batched.contains(asset.localIdentifier)))
         }
         return items
     }
 
-    /// Looks up a place name for a batch once, when its card comes on screen. Reverse
-    /// geocoding goes over the network and is rate limited, so one lookup runs at a time.
-    func nameIfNeeded(_ batch: SmartBatch) async {
-        guard places[batch.id] == nil, !geocoding.contains(batch.id), let location = batch.location else { return }
-        geocoding.insert(batch.id)
-        defer { geocoding.remove(batch.id) }
-        while geocoder.isGeocoding {
-            try? await Task.sleep(for: .milliseconds(250))
-            if Task.isCancelled { return }
+    /// Asks for a place name for a batch once, when its card comes on screen. Reverse
+    /// geocoding goes over the network and is rate limited, so requests wait in one queue and a
+    /// single loop works through it, one lookup at a time. A lookup that fails isn't retried
+    /// this session, so scrolling back and forth doesn't spend the rate limit.
+    func nameIfNeeded(_ batch: SmartBatch) {
+        guard places[batch.id] == nil, !unnamable.contains(batch.id), batch.location != nil,
+              !nameQueue.contains(where: { $0.id == batch.id }) else { return }
+        nameQueue.append(batch)
+        guard namingLoop == nil else { return }
+        namingLoop = Task { [weak self] in
+            while let self, !self.nameQueue.isEmpty {
+                let next = self.nameQueue.removeFirst()
+                await self.lookUpName(next)
+            }
+            self?.namingLoop = nil
         }
-        guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else { return }
+    }
+
+    /// Stops naming when the sheet goes away; queued cards are asked for again next time.
+    func stopNaming() {
+        namingLoop?.cancel()
+        namingLoop = nil
+        nameQueue = []
+    }
+
+    private func lookUpName(_ batch: SmartBatch) async {
+        guard places[batch.id] == nil, let location = batch.location, !Task.isCancelled else { return }
+        guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else {
+            if !Task.isCancelled { unnamable.insert(batch.id) }
+            return
+        }
         // A trip reads better by its region; a day out by its town.
         let name = batch.isTrip
             ? (placemark.locality ?? placemark.administrativeArea ?? placemark.name)
             : (placemark.locality ?? placemark.name ?? placemark.administrativeArea)
-        if let name, !name.isEmpty { places[batch.id] = name }
+        if let name, !name.isEmpty { places[batch.id] = name } else { unnamable.insert(batch.id) }
     }
 
     func assets(for batch: SmartBatch) -> [PHAsset] {

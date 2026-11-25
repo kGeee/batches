@@ -36,7 +36,7 @@ struct SuggestedBatchesRow: View {
                                     SuggestionCard(batch: batch, place: suggestions.places[batch.id], frame: frame)
                                 }
                                 .buttonStyle(.plain)
-                                .task { await suggestions.nameIfNeeded(batch) }
+                                .onAppear { suggestions.nameIfNeeded(batch) }
                             }
                         }
                         .padding(.vertical, 6)
@@ -140,14 +140,14 @@ struct SuggestionCard: View {
 struct SmartBatchReviewView: View {
     let batch: SmartBatch
     let place: String?
+    /// What's left of the 60-photo batch after picks from other places (Google Photos).
+    var limit = 60
     var onUse: ([PHAsset]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var assets: [PHAsset] = []
     @State private var selected: Set<String> = []
     @State private var hitLimit = 0
-
-    static let limit = 60
 
     var body: some View {
         VStack(spacing: 0) {
@@ -159,12 +159,14 @@ struct SmartBatchReviewView: View {
                             Text("\(batch.dateLabel) · \(batch.count.counted("photo"))").metaStyle(.caption)
                             Spacer()
                             Button(selected.isEmpty ? "Select all" : "Clear") {
-                                selected = selected.isEmpty ? Set(assets.prefix(Self.limit).map(\.localIdentifier)) : []
+                                selected = selected.isEmpty ? Set(assets.prefix(limit).map(\.localIdentifier)) : []
                             }
                             .font(.footnote.weight(.semibold))
                         }
-                        if batch.count > Self.limit {
-                            Text("A batch holds up to \(Self.limit) photos, so the first \(Self.limit) are picked. Tap to swap.")
+                        if batch.count > limit {
+                            Text(limit < 60
+                                 ? "With your other picks there's room for \(limit) more, so the first \(limit) are picked. Tap to swap."
+                                 : "A batch holds up to \(limit) photos, so the first \(limit) are picked. Tap to swap.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                         grid(width: geo.size.width - 32)
@@ -180,7 +182,7 @@ struct SmartBatchReviewView: View {
         .sensoryFeedback(.warning, trigger: hitLimit)
         .task {
             assets = SmartBatchSuggestions.assets(withIDs: batch.assetIDs)
-            selected = Set(assets.prefix(Self.limit).map(\.localIdentifier))
+            selected = Set(assets.prefix(limit).map(\.localIdentifier))
         }
     }
 
@@ -207,7 +209,7 @@ struct SmartBatchReviewView: View {
         let id = asset.localIdentifier
         if selected.contains(id) {
             selected.remove(id)
-        } else if selected.count < Self.limit {
+        } else if selected.count < limit {
             selected.insert(id)
         } else {
             hitLimit += 1
@@ -216,7 +218,7 @@ struct SmartBatchReviewView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 14) {
-            Text("\(selected.count) of \(Self.limit)").metaStyle(.footnote)
+            Text("\(selected.count) of \(limit)").metaStyle(.footnote)
             Button {
                 onUse(assets.filter { selected.contains($0.localIdentifier) })
                 dismiss()
@@ -305,18 +307,40 @@ enum JustifiedRows {
 extension PhotoImport {
     /// Copies library photos picked from a suggestion into the app, the same way the system
     /// picker's picks are copied: the current version of each photo (with any Photos edit),
-    /// its size and capture date read from the file, and its asset id kept.
+    /// its size and capture date read from the file, and its asset id kept. iCloud-only photos
+    /// download a few at a time; `progress` gets (done, total). Photos that couldn't be copied
+    /// are left out, so compare the count with `assets`.
     @MainActor
-    static func photos(from assets: [PHAsset], collectionID: UUID) async -> [Photo] {
+    static func photos(from assets: [PHAsset], collectionID: UUID,
+                       progress: ((Int, Int) -> Void)? = nil) async -> [Photo] {
         let dir = URL.documentsDirectory.appending(path: "Imports", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var copied = [URL?](repeating: nil, count: assets.count)
+        var done = 0
+        progress?(0, assets.count)
+        await withTaskGroup(of: (Int, URL?).self) { group in
+            var next = 0
+            func addNext() {
+                guard next < assets.count, !Task.isCancelled else { return }
+                let index = next, asset = assets[index]
+                next += 1
+                group.addTask { (index, await copyFile(of: asset, into: dir)) }
+            }
+            for _ in 0..<4 { addNext() }
+            for await (index, url) in group {
+                copied[index] = url
+                done += 1
+                progress?(done, assets.count)
+                addNext()
+            }
+        }
         var photos: [Photo] = []
-        for (index, asset) in assets.enumerated() {
-            guard let url = await copyFile(of: asset, into: dir) else { continue }
+        for (asset, url) in zip(assets, copied) {
+            guard let url else { continue }
             let info = metadata(of: url, fallbackAsset: asset)
             photos.append(Photo(id: UUID(), collectionID: collectionID, imageURL: url, rawURL: nil,
                                 pixelWidth: info.width, pixelHeight: info.height, caption: nil,
-                                capturedAt: info.capturedAt ?? asset.creationDate, exif: info.exif, sortIndex: index,
+                                capturedAt: info.capturedAt ?? asset.creationDate, exif: info.exif, sortIndex: photos.count,
                                 photosAssetID: asset.localIdentifier))
         }
         return photos
@@ -324,7 +348,7 @@ extension PhotoImport {
 
     /// The edited full-size photo when Photos has one, otherwise the original. iCloud photos
     /// download as needed.
-    private static func copyFile(of asset: PHAsset, into dir: URL) async -> URL? {
+    nonisolated private static func copyFile(of asset: PHAsset, into dir: URL) async -> URL? {
         let resources = PHAssetResource.assetResources(for: asset)
         guard let resource = resources.first(where: { $0.type == .fullSizePhoto })
                 ?? resources.first(where: { $0.type == .photo }) else { return nil }
