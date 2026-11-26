@@ -31,7 +31,7 @@ struct DeskLayout: Hashable, Codable {
     var groups: [DeskGroup] = []
     /// Tile centers on the freehand desk, in points.
     var positions: [String: CGPoint] = [:]
-    /// Piles lie at loose angles instead of squared up. Off unless you turn it on.
+    /// No longer read: every desk now shows tilted piles. Kept so saved layouts keep decoding.
     var tiltedPiles = false
 
     init() {}
