@@ -12,9 +12,9 @@ struct PilePlacement {
 }
 
 extension EnvironmentValues {
-    /// Whether piles lie at loose angles. Off by default, so piles are squared up; your own desk can
-    /// turn it on in Arrange.
-    @Entry var tiltedPiles = false
+    /// Whether piles lie at loose angles. On everywhere, so every desk (yours, a friend's profile, a
+    /// group) shows the same cluttered piles; a view can still turn it off for a squared-up pile.
+    @Entry var tiltedPiles = true
 }
 
 enum PileLayout {

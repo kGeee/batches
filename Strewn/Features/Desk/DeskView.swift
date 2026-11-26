@@ -143,7 +143,8 @@ struct DeskView: View {
                 .zIndex(2)
             }
         }
-        .environment(\.tiltedPiles, layout.tiltedPiles)
+        // Every desk lies cluttered: prints at loose angles, as in build 15.
+        .environment(\.tiltedPiles, true)
         // A group that lost its last batches closes with it.
         .onChange(of: model.desk.groups) { _, groups in
             if let id = openGroupID, !groups.contains(where: { $0.id == id }) { openGroupID = nil }
@@ -488,19 +489,6 @@ struct DeskView: View {
                 .accessibilityAddTraits(layout.mode == mode ? .isSelected : [])
             }
             Spacer(minLength: 8)
-            if arranging {
-                Button {
-                    withAnimation(.snappy) { model.changeDesk { $0.tiltedPiles.toggle() } }
-                } label: {
-                    Image(systemName: "rotate.right")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 40, height: 34)
-                        .foregroundStyle(layout.tiltedPiles ? Color.onAccent : Color.primary)
-                        .background(layout.tiltedPiles ? Color.strewnAccent : Color.card, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .accessibilityLabel("Tilted piles")
-                .accessibilityAddTraits(layout.tiltedPiles ? .isSelected : [])
-            }
             Button {
                 withAnimation(.snappy) { arranging.toggle() }
             } label: {
@@ -590,10 +578,10 @@ struct DeskView: View {
         return VStack(alignment: .leading, spacing: 4) {
             Group {
                 if openID == collection.id {
-                    Color.clear.aspectRatio(DeskPileView.heroShape(collection, tilted: layout.tiltedPiles), contentMode: .fit)
+                    Color.clear.aspectRatio(DeskPileView.heroShape(collection, tilted: true), contentMode: .fit)
                 } else {
                     DeskPileView(collection: collection, namespace: pileSpace, aspect: nil)
-                        .aspectRatio(DeskPileView.heroShape(collection, tilted: layout.tiltedPiles), contentMode: .fit)
+                        .aspectRatio(DeskPileView.heroShape(collection, tilted: true), contentMode: .fit)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -611,12 +599,12 @@ struct DeskView: View {
                 case .pile(let collection):
                     if openID == collection.id {
                         // Keep the slot so the grid does not reflow while the pile is spread out.
-                        Color.clear.aspectRatio(layout.tiltedPiles ? 1 : 4 / 3, contentMode: .fit)
+                        Color.clear.aspectRatio(1, contentMode: .fit)
                     } else {
                         DeskPileView(collection: collection, namespace: pileSpace)
                     }
                 case .group(let group, let piles):
-                    DeskGroupPile(group: group, piles: piles, tilted: layout.tiltedPiles)
+                    DeskGroupPile(group: group, piles: piles, tilted: true)
                 }
             }
             .overlay {

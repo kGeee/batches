@@ -67,6 +67,8 @@ struct FriendsFeedView: View {
                                 startPhotoID: openPhotoID) {
                         close()
                     }
+                    // Feed prints lie flat, so photos fly in and out of them without a tilt.
+                    .environment(\.tiltedPiles, false)
                     .zIndex(1)
                 }
             }
